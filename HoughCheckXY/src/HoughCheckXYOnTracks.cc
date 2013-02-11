@@ -89,8 +89,9 @@ private:
   // Histogram and tree
   auto_ptr<TH3S> hHoughVotes_;
   auto_ptr<TTree> trackTree_;
-  //  vector<float> vDoca_;
-  //  vector<float> vKappa_;
+  vector<double> vDoca_;
+  vector<double> vKappa_;
+  vector<double> vPhi_;
 };
 
 //
@@ -149,17 +150,23 @@ HoughCheckXYOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
   Handle<TrackCollection> tracks;
   iEvent.getByLabel(trackTags_,tracks);
-  int ntrk = 0 ;
+  int ntrk = 0;
+  vDoca_.clear();
+  vKappa_.clear();
+  vPhi_.clear();
   for(TrackCollection::const_iterator itTrack = tracks->begin(); itTrack != tracks->end(); ++itTrack) {
     if (verbosity_ > 1)
       cout << "Track #" << ntrk << " with q=" << itTrack->charge() 
 	   << ", pT=" << itTrack->pt() << " GeV, eta=" << itTrack->eta() 
-	   << ", Nhits=" << itTrack->recHitsSize() 
-	   << ", doca=" << 10.*(itTrack->dxy())
+	   << ", Nhits=" << itTrack->recHitsSize()
+	   << ", (vx,vy,vz)=(" << itTrack->vx() << "," << itTrack->vy() << "," << itTrack->vz() << ")"
+	   << ", doca=" << fabs(10.*(itTrack->dxy()))
 	   << ", kappa=" << 1.139e-3/(itTrack->pt())
+	   << ", phi=" << atan2(itTrack->vy(), itTrack->vx())
 	   << ", algo=" << itTrack->algoName(itTrack->algo()).c_str() << endl;
-    //    vDoca_.push_back(10.*(itTrack->dxy()));
-    //    vKappa_.push_back(1.139e-3/(itTrack->qoverp()));
+    vDoca_.push_back(10.*(itTrack->d0()));
+    vKappa_.push_back(1.139e-3*itTrack->charge()/(itTrack->pt()));
+    vPhi_.push_back(itTrack->phi());
     int nhit = 0;
     for (trackingRecHit_iterator i=itTrack->recHitsBegin(); i!=itTrack->recHitsEnd(); i++){
       if (verbosity_ > 2)
@@ -208,8 +215,24 @@ HoughCheckXYOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 	    double kappax2 = akappa*x/r - hkappa*y/r;
 	    double kappay1 = akappa*y/r - hkappa*x/r;
 	    double kappay2 = akappa*y/r + hkappa*x/r;
-	    hHoughVotes_->Fill(doca, kappa, atan2(kappay1, kappax1));
-	    hHoughVotes_->Fill(doca, kappa, atan2(kappay2, kappax2));
+// 	    hHoughVotes_->Fill(doca, kappa, atan2(kappay1, kappax1));
+// 	    hHoughVotes_->Fill(doca, kappa, atan2(kappay2, kappax2));
+	    // Convert to perigee parameters
+	    double phiHit = atan2(y, x);
+	    double phiD1 = atan2(kappay1, kappax1);
+	    double phiD2 = atan2(kappay2, kappax2);
+	    int rot1 = -2*(int((phiHit - phiD1 + 2*M_PI)/M_PI)%2) + 1;  // hit position wrt. poca:
+	    int rot2 = -2*(int((phiHit - phiD2 + 2*M_PI)/M_PI)%2) + 1;  // +1 = anticlockwise; -1 = clockwise
+	    double doca1 = rot1*doca;
+	    double doca2 = rot2*doca;
+	    double kappa1 = rot1*kappa;
+	    double kappa2 = rot2*kappa;
+	    double phi1 = phiD1 + rot1*(M_PI/2.);
+	    phi1 += -2.*M_PI*(int((phi1 + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
+	    double phi2 = phiD1 + rot2*(M_PI/2.);
+	    phi2 += -2.*M_PI*(int((phi2 + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
+	    hHoughVotes_->Fill(doca1, kappa1, phi1);
+	    hHoughVotes_->Fill(doca2, kappa2, phi2);
 	  }
 	}
       } else 
@@ -221,9 +244,7 @@ HoughCheckXYOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& i
       cout << endl;
     ntrk++;
   }
-  //  trackTree_->Fill();
-  //  vDoca_.clear();
-  //  vKappa_.clear();
+  trackTree_->Fill();
 }
 
 
@@ -248,12 +269,15 @@ HoughCheckXYOnTracks::beginJob()
     cout << "Invalid nBinsPhi parameter (" << nBinsPhi_ << "). Valid range is 0 < nBinsPhi <= 200. No histogram booked." << endl;
     return;
   }
-  hHoughVotes_.reset(new TH3S("hHoughVotes", "circle Hough transform votes", nBinsDoca_, 0., maxDoca_, nBinsKappa_, -maxKappa_, maxKappa_, nBinsPhi_, -M_PI, M_PI));
+  hHoughVotes_.reset(new TH3S("hHoughVotes", "circle Hough transform votes", nBinsDoca_, -maxDoca_, maxDoca_, nBinsKappa_, -maxKappa_, maxKappa_, nBinsPhi_, -M_PI, M_PI));
+  hHoughVotes_->SetDirectory(0);
 
   //  // Create tree, with branches
-  //  trackTree_.reset(new TTree("trackTree", "Fitted track parameters"));
-  //  trackTree_->Branch("doca", &vDoca_);
-  //  trackTree_->Branch("kappa", &vKappa_);
+  trackTree_.reset(new TTree("trackTree", "Fitted track parameters"));
+  trackTree_->Branch("doca", &vDoca_);
+  trackTree_->Branch("kappa", &vKappa_);
+  trackTree_->Branch("phi", &vPhi_);
+  trackTree_->SetDirectory(0);
 }
 
 // ------------ method called once each job just after ending the event loop  ------------
@@ -262,7 +286,7 @@ HoughCheckXYOnTracks::endJob()
 {
   TFile outRootFile("houghCheckXY_tracks.root", "RECREATE");
   hHoughVotes_->Write();
-  //  trackTree_->Write();
+  trackTree_->Write();
   outRootFile.Close();
 }
 
