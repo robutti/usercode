@@ -272,7 +272,7 @@ HoughCheckXYOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 	    double kappa2 = rot2*kappa;
 	    double phi1 = phiD1 + rot1*(M_PI/2.);
 	    phi1 += -2.*M_PI*(int((phi1 + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
-	    double phi2 = phiD1 + rot2*(M_PI/2.);
+	    double phi2 = phiD2 + rot2*(M_PI/2.);
 	    phi2 += -2.*M_PI*(int((phi2 + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
 	    hHoughVotes_->Fill(doca1, kappa1, phi1);
 	    hHoughVotes_->Fill(doca2, kappa2, phi2);
