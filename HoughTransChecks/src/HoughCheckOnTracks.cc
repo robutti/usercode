@@ -73,7 +73,7 @@ private:
   virtual void endRun(edm::Run const&, edm::EventSetup const&);
   virtual void beginLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&);
   virtual void endLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&);
-  
+
   // Parameters
   edm::InputTag trackTags_; //used to select what tracks to read from configuration file
   std::string builderName_;
@@ -167,6 +167,8 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
   vDoca_.clear();
   vKappa_.clear();
   vPhi_.clear();
+  vZ0_.clear();
+  vLambda_.clear();
   for(TrackCollection::const_iterator itTrack = tracks->begin(); itTrack != tracks->end(); ++itTrack) {
     if (verbosity_ > 1)
       cout << "Track #" << ntrk << " with q=" << itTrack->charge() 
@@ -191,6 +193,8 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
     vDoca_.push_back(10.*(itTrack->d0()));
     vKappa_.push_back(1.139e-3*itTrack->charge()/(itTrack->pt()));
     vPhi_.push_back(itTrack->phi());
+    vZ0_.push_back(10.*(itTrack->dz()));
+    vLambda_.push_back(itTrack->lambda());
     int nhit = 0;
     for (trackingRecHit_iterator i=itTrack->recHitsBegin(); i!=itTrack->recHitsEnd(); i++){
       if (verbosity_ > 2)
@@ -250,6 +254,7 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	  cout << " - globalPos = " << hitPosition << endl;
 	double x = 10.*hitPosition.x();
 	double y = 10.*hitPosition.y();
+	double z = 10.*hitPosition.z();
 	double r = sqrt(x*x + y*y);
 	double docaBinWidth = maxDoca_/nBinsDoca_;
 	double kappaBinWidth = 2*maxKappa_/nBinsKappa_;
@@ -274,13 +279,24 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	      int rot = -2*(int((phiHit - phiD + 2*M_PI)/M_PI)%2) + 1;  // hit position wrt. poca: +1 = anticlockwise; -1 = clockwise
 	      double doca = rot*docaH;
 	      double kappa = rot*kappaH;
+	      if (fabs(kappa) < 1.e-6)
+		kappa = (kappa >= 0) ? 1.e-6 : -1.e6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
 	      double phi = phiD + rot*(M_PI/2.);
 	      phi += -2.*M_PI*(int((phi + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
 	      double xc = (doca - 1./kappa)*sin(phi);
 	      double yc = -(doca - 1./kappa)*cos(phi);
-	      double psi = (kappa*doca > 0) ? phi - M_PI/2. : phi + M_PI/2.;
+	      int signKD = (kappa*doca > 0) ? 1 : -1;
+	      double psi = (phi > -signKD*M_PI/2.)? phi - M_PI + signKD*M_PI/2. :  phi + M_PI + signKD*M_PI/2.;  // map ro range (-PI, PI)
 	      for (double z0 = -maxAbsZ0_ + z0BinWidth/2; z0 < maxAbsZ0_; z0 += z0BinWidth) {
-		double lambda = 1./kappa*(atan2(kappa*(y - yc), kappa*(x - xc)) - psi);
+		double st = 1./kappa*(atan2(fabs(kappa)*(y - yc), fabs(kappa)*(x - xc)) - psi);
+		if (st < 0) {  // rotation angle has crossed the +/-PI border
+		  st += 2*M_PI/fabs(kappa);
+// 		  cout << "(doca, kappa, phi, z0, psi, st) = "
+// 		       << "(" << doca << ", " << kappa << ", " << phi << ", " << z0 << ", " << psi << ", " << st << ")" << endl;
+		}
+		double lambda = atan((z - z0)/st);
+// 		cout << "(doca, kappa, phi, z0, lambda) = "
+// 		     << "(" << doca << ", " << kappa << ", " << phi << ", " << z0 << ", " << lambda << ")" << endl;
 		hHoughVotes_->Fill(doca, kappa, phi, z0, lambda);
 	      }
 	    }
@@ -295,6 +311,7 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
       cout << endl;
     ntrk++;
   }
+  hHoughVotes_->Print("v");
   trackTree_->Fill();
 }
 
@@ -367,8 +384,9 @@ void
 HoughCheckOnTracks::endJob() 
 {
   TFile outRootFile("houghCheck_tracks.root", "RECREATE");
-  hHoughVotes_->Write();
-  trackTree_->Write();
+//  hHoughVotes_->Write();
+//  trackTree_->Write();
+  outRootFile.Write();  
   outRootFile.Close();
 }
 
@@ -415,6 +433,7 @@ HoughCheckOnTracks::fillDescriptions(edm::ConfigurationDescriptions& description
  //desc.addUntracked<edm::InputTag>("tracks","ctfWithMaterialTracks");
  //descriptions.addDefault(desc);
 }
+
 
 //define this as a plug-in
 DEFINE_FWK_MODULE(HoughCheckOnTracks);
