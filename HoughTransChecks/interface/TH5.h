@@ -107,6 +107,7 @@ public:
 //   virtual Double_t GetBinErrorUp(Int_t binx, Int_t biny, Int_t binz)  { return TH1::GetBinErrorUp( GetBin(binx, biny, binz) ); }
   virtual Double_t GetCorrelationFactor(Int_t axis1=1,Int_t axis2=2) const;
   virtual Double_t GetCovariance(Int_t axis1=1,Int_t axis2=2) const;
+  virtual Double_t GetMaximum(Double_t maxval=FLT_MAX) const;
   Int_t GetNbinsU() const {return fUaxis.GetNbins();}
   Int_t GetNbinsV() const {return fVaxis.GetNbins();}
 //  virtual void     GetRandom5(Double_t &x, Double_t &y, Double_t &z, Double_t &u, Double_t &v);
@@ -134,7 +135,7 @@ public:
 		    Int_t firstzbin=0, Int_t lastzbin=-1, Int_t firstvbin=0, Int_t lastvbin=-1, Option_t *option="") const; // *MENU*
   TH1D* ProjectionV(const char *name="_pv", Int_t firstxbin=0, Int_t lastxbin=-1, Int_t firstybin=0, Int_t lastybin=-1,
 		    Int_t firstzbin=0, Int_t lastzbin=-1, Int_t firstubin=0, Int_t lastubin=-1, Option_t *option="") const; // *MENU*
-  TH1* Project3D(Option_t *option="x") const; // *MENU*
+  TH1* Project5D(Option_t *option="x") const; // *MENU*
   virtual void PutStats(Double_t *stats);
 //   virtual TH5* RebinX(Int_t ngroup = 2, const char *newname = "");
 //   virtual TH5* RebinY(Int_t ngroup = 2, const char *newname = "");
@@ -145,6 +146,8 @@ public:
   virtual void Reset(Option_t *option="");
   //  virtual void SetShowProjection(const char *option="xy",Int_t nbins=1);   // *MENU*
 
+  virtual void UseCurrentStyle();
+
 protected:
   TH1D* DoProject1D(const char* name, const char * title, TAxis* projX, 
                     bool computeErrors, bool originalRange,
@@ -153,6 +156,7 @@ protected:
 		    bool computeErrors, bool originalRange,
 		    bool useUF, bool useOF) const;
    
+  ClassDef(TH5, 1)  // 5-Dim histogram base class
 };
 
 //________________________________________________________________________
@@ -201,6 +205,8 @@ public:
   friend TH5C operator-(TH5C &h1, TH5C &h2);
   friend TH5C operator*(TH5C &h1, TH5C &h2);
   friend TH5C operator/(TH5C &h1, TH5C &h2);
+
+  ClassDef(TH5C, 1)  // 5-Dim histograms (one char per channel)
 
 };
 

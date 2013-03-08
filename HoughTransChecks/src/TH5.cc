@@ -20,7 +20,8 @@
 #include "TROOT.h"
 #include "TClass.h"
 #include "THashList.h"
-#include "ERobutti/HoughTransChecks/interface/TH5.h"
+#include "../interface/TH5.h"
+//#include "ERobutti/HoughTransChecks/interface/TH5.h"
 #include "TProfile2D.h"
 #include "TH2.h"
 #include "TF1.h"
@@ -31,7 +32,9 @@
 #include "TError.h"
 #include "TMath.h"
 #include "TObjString.h"
+#include "TStyle.h"
 
+ClassImp(TH5)
 //______________________________________________________________________________
 //*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
 //*-*
@@ -47,6 +50,10 @@ TH5::TH5()
 {
    // Default constructor.
   fDimension = 5;
+  fUaxis.SetName("uaxis");
+  fVaxis.SetName("vaxis");
+  fUaxis.SetParent(this);
+  fVaxis.SetParent(this);
   fTsumwy = fTsumwy2 = fTsumwxy = 0;
   fTsumwz = fTsumwz2 = fTsumwxz = fTsumwyz = 0;
   fTsumwu = fTsumwu2 = fTsumwxu = fTsumwyu = fTsumwzu = 0;
@@ -66,6 +73,10 @@ TH5::TH5(const char *name, const char *title,
 //*-*              ==================================================
 
   fDimension = 5;
+  fUaxis.SetName("uaxis");
+  fVaxis.SetName("vaxis");
+  fUaxis.SetParent(this);
+  fVaxis.SetParent(this);
   if (nbinsy <= 0) nbinsy = 1;
   if (nbinsz <= 0) nbinsz = 1;
   if (nbinsu <= 0) nbinsu = 1;
@@ -79,6 +90,7 @@ TH5::TH5(const char *name, const char *title,
   fTsumwz = fTsumwz2 = fTsumwxz = fTsumwyz = 0;
   fTsumwu = fTsumwu2 = fTsumwxu = fTsumwyu = fTsumwzu = 0;
   fTsumwv = fTsumwv2 = fTsumwxv = fTsumwyv = fTsumwzv = fTsumwuv = 0;
+  UseCurrentStyle();
 }
 
 //______________________________________________________________________________
@@ -93,6 +105,10 @@ TH5::TH5(const char *name, const char *title,
 //*-*-*-*-*-*-*-*Normal constructor for variable bin size 5-D histograms*-*-*-*
 //*-*            =======================================================
   fDimension = 5;
+  fUaxis.SetName("uaxis");
+  fVaxis.SetName("vaxis");
+  fUaxis.SetParent(this);
+  fVaxis.SetParent(this);
   if (nbinsy <= 0) nbinsy = 1;
   if (nbinsz <= 0) nbinsz = 1;
   if (nbinsu <= 0) nbinsu = 1;
@@ -118,6 +134,7 @@ TH5::TH5(const char *name, const char *title,
   fTsumwz = fTsumwz2 = fTsumwxz = fTsumwyz = 0;
   fTsumwu = fTsumwu2 = fTsumwxu = fTsumwyu = fTsumwzu = 0;
   fTsumwv = fTsumwv2 = fTsumwxv = fTsumwyv = fTsumwzv = fTsumwuv = 0;
+  UseCurrentStyle();
 }
 
 //______________________________________________________________________________
@@ -132,6 +149,10 @@ TH5::TH5(const char *name, const char *title,
 //*-*-*-*-*-*-*-*Normal constructor for variable bin size 5-D histograms*-*-*-*
 //*-*            =======================================================
   fDimension = 5;
+  fUaxis.SetName("uaxis");
+  fVaxis.SetName("vaxis");
+  fUaxis.SetParent(this);
+  fVaxis.SetParent(this);
   if (nbinsy <= 0) nbinsy = 1;
   if (nbinsz <= 0) nbinsz = 1;
   if (nbinsu <= 0) nbinsu = 1;
@@ -157,6 +178,7 @@ TH5::TH5(const char *name, const char *title,
   fTsumwz = fTsumwz2 = fTsumwxz = fTsumwyz = 0;
   fTsumwu = fTsumwu2 = fTsumwxu = fTsumwyu = fTsumwzu = 0;
   fTsumwv = fTsumwv2 = fTsumwxv = fTsumwyv = fTsumwzv = fTsumwuv = 0;
+  UseCurrentStyle();
 }
 
 //______________________________________________________________________________
@@ -668,6 +690,47 @@ Double_t TH5::GetCovariance(Int_t axis1, Int_t axis2) const
    return 0;
 }
 
+
+//______________________________________________________________________________
+Double_t TH5::GetMaximum(Double_t maxval) const
+{
+  //  Return maximum value smaller than maxval of bins in the range,
+  //  unless the value has been overridden by TH1::SetMaximum,
+  //  in which case it returns that value. (This happens, for example,
+  //  when the histogram is drawn and the y or z axis limits are changed
+  //
+  //  To get the maximum value of bins in the histogram regardless of
+  //  whether the value has been overridden, use
+  //      h->GetBinContent(h->GetMaximumBin())
+  
+  if (fMaximum != -1111) return fMaximum;
+  Int_t bin, binx, biny, binz, binu, binv;
+  Int_t xfirst  = fXaxis.GetFirst();
+  Int_t xlast   = fXaxis.GetLast();
+  Int_t yfirst  = fYaxis.GetFirst();
+  Int_t ylast   = fYaxis.GetLast();
+  Int_t zfirst  = fZaxis.GetFirst();
+  Int_t zlast   = fZaxis.GetLast();
+  Int_t ufirst  = fUaxis.GetFirst();
+  Int_t ulast   = fUaxis.GetLast();
+  Int_t vfirst  = fVaxis.GetFirst();
+  Int_t vlast   = fVaxis.GetLast();
+  Double_t maximum = -FLT_MAX, value;
+  for (binv = vfirst; binv <= vlast; binv++) {
+    for (binu = ufirst; binu <= ulast; binu++) {
+      for (binz = zfirst; binz <= zlast; binz++) {
+	for (biny = yfirst; biny <= ylast; biny++) {
+	  for (binx = xfirst; binx <= xlast; binx++) {
+            bin = GetBin(binx, biny, binz, binu, binv);
+            value = GetBinContent(bin);
+            if (value > maximum && value < maxval) maximum = value;
+	  }
+	}
+      }
+    }
+  }
+  return maximum;
+}
 
 //______________________________________________________________________________
 // void TH5::GetRandom5(Double_t &x, Double_t &y, Double_t &z, Double_t &u, Double_t &v)
@@ -1446,7 +1509,7 @@ TH1D *TH5::ProjectionX(const char *name, Int_t iymin, Int_t iymax, Int_t izmin, 
   //   NOTE that if a TH1D named "name" exists in the current directory or pad 
   //   the histogram is reset and filled again with the projected contents of the TH5.
   //
-  //  implemented using Project3D
+  //  implemented using Project5D
   
   
   TString opt = option;
@@ -1535,7 +1598,7 @@ TH1D *TH5::ProjectionY(const char *name, Int_t ixmin, Int_t ixmax, Int_t izmin, 
   //   NOTE that if a TH1D named "name" exists in the current directory or pad 
   //   the histogram is reset and filled again with the projected contents of the TH5.
   //
-  //  implemented using Project3D
+  //  implemented using Project5D
   
   
   TString opt = option;
@@ -1624,7 +1687,7 @@ TH1D *TH5::ProjectionZ(const char *name, Int_t ixmin, Int_t ixmax, Int_t iymin, 
   //   NOTE that if a TH1D named "name" exists in the current directory or pad 
   //   the histogram is reset and filled again with the projected contents of the TH5.
   //
-  //  implemented using Project3D
+  //  implemented using Project5D
   
   
   TString opt = option;
@@ -1713,7 +1776,7 @@ TH1D *TH5::ProjectionU(const char *name, Int_t ixmin, Int_t ixmax, Int_t iymin, 
   //   NOTE that if a TH1D named "name" exists in the current directory or pad 
   //   the histogram is reset and filled again with the projected contents of the TH5.
   //
-  //  implemented using Project3D
+  //  implemented using Project5D
   
   
   TString opt = option;
@@ -1802,7 +1865,7 @@ TH1D *TH5::ProjectionV(const char *name, Int_t ixmin, Int_t ixmax, Int_t iymin, 
   //   NOTE that if a TH1D named "name" exists in the current directory or pad 
   //   the histogram is reset and filled again with the projected contents of the TH5.
   //
-  //  implemented using Project3D
+  //  implemented using Project5D
   
   
   TString opt = option;
@@ -1876,7 +1939,7 @@ TH1D *TH5::DoProject1D(const char* name, const char* title, TAxis* projX,
 		       bool useUF, bool useOF) const
 {
   // internal methdod performing the projection to 1D histogram
-  // called from TH5::Project3D
+  // called from TH5::Project5D
   
   // Create the projection histogram
   TH1D *h1 = 0;
@@ -2108,7 +2171,7 @@ TH2D *TH5::DoProject2D(const char* name, const char * title, TAxis* projX, TAxis
                     bool useUF, bool useOF) const
 {
   // internal method performing the projection to a 2D histogram
-  // called from TH5::Project3D 
+  // called from TH5::Project5D 
   
   TH2D *h2 = 0;
   
@@ -2502,9 +2565,9 @@ TH2D *TH5::DoProject2D(const char* name, const char * title, TAxis* projX, TAxis
 
 
 //______________________________________________________________________________
-TH1 *TH5::Project3D(Option_t *option) const
+TH1 *TH5::Project5D(Option_t *option) const
 {
-  // Project a 3-d histogram into 1 or 2-d histograms depending on the
+  // Project a 5-d histogram into 1 or 2-d histograms depending on the
   // option parameter
   // option may contain a combination of the characters x, y, z, u, v, e
   // option = "x" return the x projection into a TH1D histogram
@@ -2526,14 +2589,14 @@ TH1 *TH5::Project3D(Option_t *option) const
   //
   // NOTE 1: The generated histogram is named th3name + option
   // eg if the TH5* h histogram is named "myhist", then
-  // h->Project3D("xy"); produces a TH2D histogram named "myhist_xy"
+  // h->Project5D("xy"); produces a TH2D histogram named "myhist_xy"
   // if a histogram of the same type already exists, it is overwritten.
   // The following sequence
-  //    h->Project3D("xy");
-  //    h->Project3D("xy2");
+  //    h->Project5D("xy");
+  //    h->Project5D("xy2");
   //  will generate two TH2D histograms named "myhist_xy" and "myhist_xy2"
   //  A different name can be generated by attaching a string to the option
-  //  For example h->Project3D("name_xy") will generate an histogram with the name:  h3dname_name_xy. 
+  //  For example h->Project5D("name_xy") will generate an histogram with the name:  h3dname_name_xy. 
   //
   //  NOTE 2: If an histogram of the same type already exists, 
   //  the histogram is reset and filled again with the projected contents of the TH5.
@@ -2579,7 +2642,7 @@ TH1 *TH5::Project3D(Option_t *option) const
   if (opt.Contains("vu")) { pcase = 25; ptype = "vu"; }
    
   if (pcase == 0) { 
-    Error("Project3D","No projection axis specified - return a NULL pointer"); 
+    Error("Project5D","No projection axis specified - return a NULL pointer"); 
     return 0; 
   }
   // do not remove ptype from opt to use later in the projected histo name
@@ -3361,11 +3424,24 @@ void TH5::Reset(Option_t *option)
 // }
  
 //______________________________________________________________________________
+void TH5::UseCurrentStyle()
+{
+  //   Copy current attributes from/to current style
+
+  TH1::UseCurrentStyle();  
+  if (!gStyle) return;
+  if (gStyle->IsReading()) {
+    fUaxis.ResetAttAxis("X");  // TStyle only knows x, y, z, axes
+    fVaxis.ResetAttAxis("X");  // TStyle only knows x, y, z, axes
+  }
+}
+
+//______________________________________________________________________________
 //                     TH5C methods
 //  TH5C a 3-D histogram with one byte per cell (char)
 //______________________________________________________________________________
  
-//ClassImp(TH5C)
+ClassImp(TH5C)
    
 //______________________________________________________________________________
 TH5C::TH5C(): TH5(), TArrayC()
