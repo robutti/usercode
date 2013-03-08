@@ -48,6 +48,13 @@
 #include "ERobutti/HoughTransChecks/interface/TH5.h"
 #include "TFile.h"
 #include "TTree.h"
+#include "TString.h"
+#include "TROOT.h"
+#include "TStyle.h"
+#include "TCanvas.h"
+#include "TH2S.h"
+#include "TEllipse.h"
+
 
 //
 // class declaration
@@ -74,21 +81,24 @@ private:
   virtual void beginLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&);
   virtual void endLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&);
 
+  void plotHoughProjections(int iparX, int iparY);
+  
   // Parameters
   edm::InputTag trackTags_; //used to select what tracks to read from configuration file
   std::string builderName_;
   const TransientTrackingRecHitBuilder* builder_;
   const vector<unsigned int> algoSel_;
   const vector<unsigned int> layerSel_;
-  const float maxDoca_;
+  const float maxAbsDoca_;
   const int nBinsDoca_;
-  const float maxKappa_;
+  const float maxAbsKappa_;
   const int nBinsKappa_;
   const int nBinsPhi_;
   const float maxAbsZ0_;
   const int nBinsZ0_;
   const float maxAbsLambda_;
   const int nBinsLambda_;
+  const int projectionPars_;
   const unsigned int verbosity_;
   const unsigned int printProgressFrequency_;
 
@@ -119,15 +129,16 @@ HoughCheckOnTracks::HoughCheckOnTracks(const edm::ParameterSet& iConfig)
   builderName_(iConfig.getParameter<std::string>("TTRHBuilder")),
   algoSel_(iConfig.getParameter<vector<unsigned int> >("algoSel")),
   layerSel_(iConfig.getParameter<vector<unsigned int> >("layerSel")),
-  maxDoca_(iConfig.getUntrackedParameter<double>("maxDoca", 44.)),  // radius of inner pixel layer
+  maxAbsDoca_(iConfig.getUntrackedParameter<double>("maxAbsDoca", 44.)),  // radius of inner pixel layer
   nBinsDoca_(iConfig.getUntrackedParameter<int>("nBinsDoca", 100)),
-  maxKappa_(iConfig.getUntrackedParameter<double>("maxKappa", 1./45.)),  // larger than radius of inner pixel layer
+  maxAbsKappa_(iConfig.getUntrackedParameter<double>("maxAbsKappa", 1./45.)),  // larger than radius of inner pixel layer
   nBinsKappa_(iConfig.getUntrackedParameter<int>("nBinsKappa", 100)),
   nBinsPhi_(iConfig.getUntrackedParameter<int>("nBinsPhi", 100)),
   maxAbsZ0_(iConfig.getUntrackedParameter<double>("maxAbsZ0", 265.)),  // pixel barrel half-length
   nBinsZ0_(iConfig.getUntrackedParameter<int>("nBinsZ0", 100)),
   maxAbsLambda_(iConfig.getUntrackedParameter<double>("maxAbsLambda", 1.40)),  // tracker eta acceptance
   nBinsLambda_(iConfig.getUntrackedParameter<int>("nBinsLambda", 100)),
+  projectionPars_(iConfig.getUntrackedParameter<int>("projectionPars", 0)),
   verbosity_(iConfig.getUntrackedParameter<unsigned int>("verbosity", 0)),
   printProgressFrequency_(iConfig.getUntrackedParameter<unsigned int>("printProgressFrequency", 1000))
 {
@@ -175,9 +186,11 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	   << ", pT=" << itTrack->pt() << " GeV, eta=" << itTrack->eta() 
 	   << ", Nhits=" << itTrack->recHitsSize()
 	   << ", (vx,vy,vz)=(" << itTrack->vx() << "," << itTrack->vy() << "," << itTrack->vz() << ")"
-	   << ", doca=" << fabs(10.*(itTrack->dxy()))
-	   << ", kappa=" << 1.139e-3/(itTrack->pt())
-	   << ", phi=" << atan2(itTrack->vy(), itTrack->vx())
+	   << ", doca=" << 10.*(itTrack->d0())
+	   << ", kappa=" << 1.139e-3*itTrack->charge()/(itTrack->pt())
+	   << ", phi=" << itTrack->phi()
+	   << ", z0=" << 10.*(itTrack->dz())
+	   << ", lambda=" << itTrack->lambda()
 	   << ", algo=" << itTrack->algoName(itTrack->algo()).c_str() << endl;
     if (algoSel_.size() != 0) {  // empty vector means 'keep all tracks'
       bool validAlgo = false;
@@ -196,14 +209,14 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
     vZ0_.push_back(10.*(itTrack->dz()));
     vLambda_.push_back(itTrack->lambda());
     int nhit = 0;
-    for (trackingRecHit_iterator i=itTrack->recHitsBegin(); i!=itTrack->recHitsEnd(); i++){
+    for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
       if (verbosity_ > 2)
-	cout << "hit #" << nhit;
+ 	cout << "hit #" << nhit;
       TransientTrackingRecHit::RecHitPointer hit = builder_->build(&**i );
       // Keep only hits from selected layers
       DetId hitId = hit->geographicalId();
       if(hitId.det() != DetId::Tracker)
-	break;
+	continue;
       if (layerSel_.size() != 0) {  // empty vector means 'keep all hits'
 	bool validLyr = false;
 	for (vector<unsigned int>::const_iterator itLyr = layerSel_.begin(); itLyr != layerSel_.end(); itLyr++) {
@@ -246,7 +259,7 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	    }
  	}
 	if (!validLyr)
-	  break;
+	  continue;
       }
       if (hit->isValid()) {
 	GlobalPoint hitPosition = hit->globalPosition();
@@ -256,13 +269,13 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	double y = 10.*hitPosition.y();
 	double z = 10.*hitPosition.z();
 	double r = sqrt(x*x + y*y);
-	double docaBinWidth = maxDoca_/nBinsDoca_;
-	double kappaBinWidth = 2*maxKappa_/nBinsKappa_;
+	double docaBinWidth = 2*maxAbsDoca_/nBinsDoca_;
+	double kappaBinWidth = 2*maxAbsKappa_/nBinsKappa_;
 	double z0BinWidth = 2*maxAbsZ0_/nBinsZ0_;
 	// Loop on allowed histogram bins (first doca, then kappa, then phi) and fill histogram
-	for (double docaH = docaBinWidth/2; docaH < maxDoca_ && docaH < r; docaH += docaBinWidth) {
+	for (double docaH = docaBinWidth/2; docaH < maxAbsDoca_ && docaH < r; docaH += docaBinWidth) {
 	  // Start from first allowed kappa bin (must be k >= -2/(r + docaH))
-	  double firstKappa = -maxKappa_ + kappaBinWidth/2;
+	  double firstKappa = -maxAbsKappa_ + kappaBinWidth/2;
 	  if (-2/(r + docaH) > firstKappa) {
 	    int binPosition = (-2/(r + docaH))/kappaBinWidth;
 	    firstKappa = (binPosition - 0.5)*kappaBinWidth;
@@ -285,15 +298,14 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	      phi += -2.*M_PI*(int((phi + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
 	      double xc = (doca - 1./kappa)*sin(phi);
 	      double yc = -(doca - 1./kappa)*cos(phi);
-	      int signKD = (kappa*doca > 0) ? 1 : -1;
-	      double psi = (phi > -signKD*M_PI/2.)? phi - M_PI + signKD*M_PI/2. :  phi + M_PI + signKD*M_PI/2.;  // map ro range (-PI, PI)
 	      for (double z0 = -maxAbsZ0_ + z0BinWidth/2; z0 < maxAbsZ0_; z0 += z0BinWidth) {
-		double st = 1./kappa*(atan2(fabs(kappa)*(y - yc), fabs(kappa)*(x - xc)) - psi);
-		if (st < 0) {  // rotation angle has crossed the +/-PI border
-		  st += 2*M_PI/fabs(kappa);
+		double st = 1./kappa*(atan2(kappa*(y - yc), kappa*(x - xc)) - phi + M_PI/2.);
+		if (st < 0)  // rotation angle has crossed the +/-PI border
+		  st += 2.*M_PI/fabs(kappa);
+		else if (st > 2.*M_PI/fabs(kappa))
+		  st -= 2.*M_PI/fabs(kappa);
 // 		  cout << "(doca, kappa, phi, z0, psi, st) = "
 // 		       << "(" << doca << ", " << kappa << ", " << phi << ", " << z0 << ", " << psi << ", " << st << ")" << endl;
-		}
 		double lambda = atan((z - z0)/st);
 // 		cout << "(doca, kappa, phi, z0, lambda) = "
 // 		     << "(" << doca << ", " << kappa << ", " << phi << ", " << z0 << ", " << lambda << ")" << endl;
@@ -321,16 +333,16 @@ void
 HoughCheckOnTracks::beginJob()
 {
   // Book 5D histogram
-  if (maxDoca_ <= 0. || maxDoca_ > 550.) {
-    cout << "Invalid maxDoca parameter (" << maxDoca_ << " mm). Valid range is 0. < maxDoca <= 550 mm. No histogram booked." << endl;
+  if (maxAbsDoca_ <= 0. || maxAbsDoca_ > 550.) {
+    cout << "Invalid maxAbsDoca parameter (" << maxAbsDoca_ << " mm). Valid range is 0. < maxAbsDoca <= 550 mm. No histogram booked." << endl;
     return;
   }
   if (nBinsDoca_ <= 0 || nBinsDoca_ > 200) {
     cout << "Invalid nBinsDoca parameter (" << nBinsDoca_ << "). Valid range is 0 < nBinsDoca <= 200. No histogram booked." << endl;
     return;
   }
-  if (maxDoca_ <= 0. || maxKappa_ > 1./45.) {
-    cout << "Invalid maxKappa parameter (" << maxKappa_ << " mm^-1). Valid range is 0. < maxKappa <= 1/45 mm. No histogram booked." << endl;
+  if (maxAbsKappa_ <= 0. || maxAbsKappa_ > 1./45.) {
+    cout << "Invalid maxAbsKappa parameter (" << maxAbsKappa_ << " mm^-1). Valid range is 0. < maxAbsKappa <= 1/45 mm. No histogram booked." << endl;
     return;
   }
   if (nBinsKappa_ <= 0 || nBinsKappa_ > 200) {
@@ -357,7 +369,7 @@ HoughCheckOnTracks::beginJob()
     cout << "Invalid nBinsLambda parameter (" << nBinsLambda_ << "). Valid range is 0 < nBinsLambda <= 200. No histogram booked." << endl;
     return;
   }
-  hHoughVotes_.reset(new TH5C("hHoughVotes", "helix Hough transform votes", nBinsDoca_, -maxDoca_, maxDoca_, nBinsKappa_, -maxKappa_, maxKappa_,
+  hHoughVotes_.reset(new TH5C("hHoughVotes", "helix Hough transform votes", nBinsDoca_, -maxAbsDoca_, maxAbsDoca_, nBinsKappa_, -maxAbsKappa_, maxAbsKappa_,
 			      nBinsPhi_, -M_PI, M_PI, nBinsZ0_, -maxAbsZ0_, maxAbsZ0_, nBinsLambda_, -maxAbsLambda_, maxAbsLambda_));
   hHoughVotes_->SetDirectory(0);
 
@@ -383,11 +395,13 @@ HoughCheckOnTracks::beginJob()
 void 
 HoughCheckOnTracks::endJob() 
 {
+  int iparX = projectionPars_/10;
+  int iparY = projectionPars_%10;
+  if (iparX >= 0 && iparX <= 4 && iparY >= 0 && iparY <= 4 && iparX != iparY)
+    plotHoughProjections(iparX, iparY);
   TFile outRootFile("houghCheck_tracks.root", "RECREATE");
-//  hHoughVotes_->Write();
-//  trackTree_->Write();
-  outRootFile.Write();  
-  outRootFile.Close();
+  hHoughVotes_->Write();
+  trackTree_->Write();
 }
 
 // ------------ method called when starting to processes a run  ------------
@@ -434,6 +448,136 @@ HoughCheckOnTracks::fillDescriptions(edm::ConfigurationDescriptions& description
  //descriptions.addDefault(desc);
 }
 
+// ------------ method to plot projection histograms for Hough votes  ------------
+void
+HoughCheckOnTracks::plotHoughProjections(int iparX, int iparY) {
+  // Build all-events vectors from tree (per-event) entries
+  vector<double> vPar[5];
+  // Loop on tree
+  for (int iEv = 0; iEv < trackTree_->GetEntries(); iEv++) {
+    long tEntry = trackTree_->LoadTree(iEv);
+    trackTree_->GetEntry(tEntry);
+    for (unsigned int iTk = 0; iTk < vDoca_.size(); iTk++) {
+      vPar[0].push_back(vDoca_.at(iTk));
+      vPar[1].push_back(vKappa_.at(iTk));
+      vPar[2].push_back(vPhi_.at(iTk));
+      vPar[3].push_back(vZ0_.at(iTk));
+      vPar[4].push_back(vLambda_.at(iTk));
+    }
+  }
+
+  // Index names, axes, etc.
+  TString axisName[5];
+  axisName[0] = "x";
+  axisName[1] = "y";
+  axisName[2] = "z";
+  axisName[3] = "u";
+  axisName[4] = "v";
+  TString parName[5];
+  parName[0] = "doca";
+  parName[1] = "kappa";
+  parName[2] = "phi";
+  parName[3] = "z0";
+  parName[4] = "lambda";
+  TAxis* axis[5];
+  axis[0] = hHoughVotes_->GetXaxis();
+  axis[1] = hHoughVotes_->GetYaxis();
+  axis[2] = hHoughVotes_->GetZaxis();
+  axis[3] = hHoughVotes_->GetUaxis();
+  axis[4] = hHoughVotes_->GetVaxis();
+  int iProjAxis[3];
+  unsigned int nProj = 0;
+  for (int iAxis = 0; iAxis < 5; iAxis++)
+    if (iAxis != iparX && iAxis != iparY) {
+      iProjAxis[nProj++] = iAxis;
+      if (nProj == 3)
+	break;
+    }
+
+  // Set up graphics
+  TString psFileName = "houghVoteProjections.ps";
+  TString openPsStr = psFileName + "[";
+  TString closePsStr = psFileName + "]";
+  gROOT->SetStyle("Plain");
+  gStyle->SetPalette(1);
+  gStyle->SetOptFit(0001);
+  gStyle->SetOptStat(0);
+  double maxVote = hHoughVotes_->GetMaximum() + 128;
+  TCanvas cHoughProj("cHoughProj", "", 800, 1200);
+  TH2S* hProj[6];
+  TString hName, hTitle;
+  float rX = 0.05*(axis[iparX]->GetXmax() - axis[iparX]->GetXmin());
+  float rY = 0.05*(axis[iparY]->GetXmax() - axis[iparY]->GetXmin());
+  cHoughProj.Print(openPsStr);
+
+  //
+  TString projName = axisName[iparY] + axisName[iparX];
+  int iPad = 0;
+  cHoughProj.Divide(2, 3);
+  for (int iBin0 = 1; iBin0 <= axis[iProjAxis[0]]->GetNbins(); iBin0++) {
+    float par0 = axis[iProjAxis[0]]->GetBinCenter(iBin0);
+    stringstream par0Str;
+    par0Str << setprecision(4) << par0;
+    for (int iBin1 = 1; iBin1 <= axis[iProjAxis[1]]->GetNbins(); iBin1++) {
+      float par1 = axis[iProjAxis[1]]->GetBinCenter(iBin1);
+      stringstream par1Str;
+      par1Str << setprecision(4) << par1;
+      for (int iBin2 = 1; iBin2 <= axis[iProjAxis[2]]->GetNbins(); iBin2++) {
+	cHoughProj.cd(++iPad);
+	float par2 = axis[iProjAxis[2]]->GetBinCenter(iBin2);
+	stringstream par2Str;
+	par2Str << setprecision(4) << par2;
+	hName = TString("h") + parName[iparX] + parName[iparY] + 
+	  "-" + parName[iProjAxis[0]] + par0Str.str().c_str() + 
+	  "-" + parName[iProjAxis[1]] + par1Str.str().c_str() + 
+	  "-" + parName[iProjAxis[2]] + par2Str.str().c_str();
+	hTitle = parName[iparY] + " vs. " + parName[iparX] + ", " + 
+	  parName[iProjAxis[0]] + " = " + par0Str.str().c_str() + ", " +
+	  parName[iProjAxis[1]] + " = " + par1Str.str().c_str() + ", " +
+	  parName[iProjAxis[2]] + " = " + par2Str.str().c_str();
+	axis[iProjAxis[0]]->SetRange(iBin0, iBin0);
+	axis[iProjAxis[1]]->SetRange(iBin1, iBin1);
+	axis[iProjAxis[2]]->SetRange(iBin2, iBin2);
+	hProj[iPad - 1] = (TH2S*)(hHoughVotes_->Project5D(projName));
+	hProj[iPad - 1]->SetNameTitle(hName, hTitle);
+	// Add 128 to each projection bin
+	for (int iBinX = 1; iBinX <= hProj[iPad - 1]->GetNbinsX(); iBinX++)
+	  for (int iBinY = 1; iBinY <= hProj[iPad - 1]->GetNbinsY(); iBinY++)
+	    hProj[iPad - 1]->SetBinContent(iBinX, iBinY, hProj[iPad - 1]->GetBinContent(iBinX, iBinY) + 128);
+	hProj[iPad - 1]->SetMinimum(0.);
+	hProj[iPad - 1]->SetMaximum(maxVote);
+	hProj[iPad - 1]->Draw("COLZ");
+	// Draw circles around fitted track parameters
+	for (unsigned int iTkPar = 0; iTkPar < vPar[iProjAxis[0]].size(); iTkPar++) {
+	  if (vPar[iProjAxis[0]].at(iTkPar) > axis[iProjAxis[0]]->GetBinLowEdge(iBin0) &&
+	      vPar[iProjAxis[0]].at(iTkPar) <= axis[iProjAxis[0]]->GetBinUpEdge(iBin0) &&
+	      vPar[iProjAxis[1]].at(iTkPar) > axis[iProjAxis[1]]->GetBinLowEdge(iBin1) &&
+	      vPar[iProjAxis[1]].at(iTkPar) <= axis[iProjAxis[1]]->GetBinUpEdge(iBin1) &&
+	      vPar[iProjAxis[2]].at(iTkPar) > axis[iProjAxis[2]]->GetBinLowEdge(iBin2) &&
+	      vPar[iProjAxis[2]].at(iTkPar) <= axis[iProjAxis[2]]->GetBinUpEdge(iBin2)) {
+	    TEllipse* circle = new TEllipse(vPar[iparX].at(iTkPar), vPar[iparY].at(iTkPar), rX, rY);
+	    circle->SetLineWidth(2);
+	    circle->SetLineColor(kYellow);
+	    circle->SetFillStyle(0);
+	    circle->Draw();
+	  }
+	}
+	// Print page if complete      
+	if (iPad == 6) {
+	  cHoughProj.Update();
+	  cHoughProj.Print(psFileName);
+	  cHoughProj.Clear();
+	  cHoughProj.Divide(2, 3);
+	  iPad = 0;
+	}
+      }
+    }
+  }
+  cHoughProj.Update();
+  cHoughProj.Print(psFileName);
+
+  cHoughProj.Print(closePsStr);
+}
 
 //define this as a plug-in
 DEFINE_FWK_MODULE(HoughCheckOnTracks);
