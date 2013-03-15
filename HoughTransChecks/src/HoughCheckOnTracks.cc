@@ -21,6 +21,7 @@
 // system include files
 #include <memory>
 #include <vector>
+#include <algorithm>
 
 // user include files
 #include "FWCore/Framework/interface/Frameworkfwd.h"
@@ -89,14 +90,17 @@ private:
   const TransientTrackingRecHitBuilder* builder_;
   const vector<unsigned int> algoSel_;
   const vector<unsigned int> layerSel_;
-  const float maxAbsDoca_;
+  double minDoca_, maxDoca_;
   const int nBinsDoca_;
-  const float maxAbsKappa_;
+  double minDocaScan_, maxDocaScan_;
+  double minKappa_, maxKappa_;
   const int nBinsKappa_;
+  double minKappaScan_, maxKappaScan_;
+  double minPhi_, maxPhi_;
   const int nBinsPhi_;
-  const float maxAbsZ0_;
+  double minZ0_, maxZ0_;
   const int nBinsZ0_;
-  const float maxAbsLambda_;
+  double minLambda_, maxLambda_;
   const int nBinsLambda_;
   const int projectionPars_;
   const unsigned int verbosity_;
@@ -110,6 +114,7 @@ private:
   vector<double> vPhi_;
   vector<double> vZ0_;
   vector<double> vLambda_;
+  vector<double> vAlgo_;
 };
 
 //
@@ -129,19 +134,30 @@ HoughCheckOnTracks::HoughCheckOnTracks(const edm::ParameterSet& iConfig)
   builderName_(iConfig.getParameter<std::string>("TTRHBuilder")),
   algoSel_(iConfig.getParameter<vector<unsigned int> >("algoSel")),
   layerSel_(iConfig.getParameter<vector<unsigned int> >("layerSel")),
-  maxAbsDoca_(iConfig.getUntrackedParameter<double>("maxAbsDoca", 44.)),  // radius of inner pixel layer
   nBinsDoca_(iConfig.getUntrackedParameter<int>("nBinsDoca", 100)),
-  maxAbsKappa_(iConfig.getUntrackedParameter<double>("maxAbsKappa", 1./45.)),  // larger than radius of inner pixel layer
   nBinsKappa_(iConfig.getUntrackedParameter<int>("nBinsKappa", 100)),
   nBinsPhi_(iConfig.getUntrackedParameter<int>("nBinsPhi", 100)),
-  maxAbsZ0_(iConfig.getUntrackedParameter<double>("maxAbsZ0", 265.)),  // pixel barrel half-length
   nBinsZ0_(iConfig.getUntrackedParameter<int>("nBinsZ0", 100)),
-  maxAbsLambda_(iConfig.getUntrackedParameter<double>("maxAbsLambda", 1.40)),  // tracker eta acceptance
   nBinsLambda_(iConfig.getUntrackedParameter<int>("nBinsLambda", 100)),
   projectionPars_(iConfig.getUntrackedParameter<int>("projectionPars", 0)),
   verbosity_(iConfig.getUntrackedParameter<unsigned int>("verbosity", 0)),
   printProgressFrequency_(iConfig.getUntrackedParameter<unsigned int>("printProgressFrequency", 1000))
 {
+  vector<double> rangeDoca = iConfig.getUntrackedParameter<vector<double> >("rangeDoca", {-44., 44.});  // radius of inner pixel layer
+  minDoca_ = rangeDoca[0];
+  maxDoca_ = rangeDoca[1];
+  vector<double> rangeKappa = iConfig.getUntrackedParameter<vector<double> >("rangeKappa", {-1./45, 1./45});  // larger than radius of inner pixel layer
+  minKappa_ = rangeKappa[0];
+  maxKappa_ = rangeKappa[1];
+  vector<double> rangePhi = iConfig.getUntrackedParameter<vector<double> >("rangePhi", {-M_PI, M_PI});
+  minPhi_ = rangePhi[0];
+  maxPhi_ = rangePhi[1];
+  vector<double> rangeZ0 = iConfig.getUntrackedParameter<vector<double> >("rangeZ0", {-265., 265.});  // pixel barrel half-length
+  minZ0_ = rangeZ0[0];
+  maxZ0_ = rangeZ0[1];
+  vector<double> rangeLambda = iConfig.getUntrackedParameter<vector<double> >("rangeLambda", {-1.40, 1.40});  // tracker eta acceptance
+  minLambda_ = rangeLambda[0];
+  maxLambda_ = rangeLambda[1];
 }
 
 
@@ -201,13 +217,16 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	}
       }
       if (!validAlgo)
-	break;
+	continue;
     }
     vDoca_.push_back(10.*(itTrack->d0()));
     vKappa_.push_back(1.139e-3*itTrack->charge()/(itTrack->pt()));
     vPhi_.push_back(itTrack->phi());
     vZ0_.push_back(10.*(itTrack->dz()));
     vLambda_.push_back(itTrack->lambda());
+    vAlgo_.push_back(itTrack->algo());
+    if (!(hHoughVotes_.get()))
+      return;
     int nhit = 0;
     for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
       if (verbosity_ > 2)
@@ -269,20 +288,22 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	double y = 10.*hitPosition.y();
 	double z = 10.*hitPosition.z();
 	double r = sqrt(x*x + y*y);
-	double docaBinWidth = 2*maxAbsDoca_/nBinsDoca_;
-	double kappaBinWidth = 2*maxAbsKappa_/nBinsKappa_;
-	double z0BinWidth = 2*maxAbsZ0_/nBinsZ0_;
+	double docaBinWidth = (maxDoca_ - minDoca_)/nBinsDoca_;
+	double kappaBinWidth = (maxKappa_ - minKappa_)/nBinsKappa_;
+	double z0BinWidth = (maxZ0_ - minZ0_)/nBinsZ0_;
 	// Loop on allowed histogram bins (first doca, then kappa, then phi) and fill histogram
-	for (double docaH = docaBinWidth/2; docaH < maxAbsDoca_ && docaH < r; docaH += docaBinWidth) {
-	  // Start from first allowed kappa bin (must be k >= -2/(r + docaH))
-	  double firstKappa = -maxAbsKappa_ + kappaBinWidth/2;
-	  if (-2/(r + docaH) > firstKappa) {
-	    int binPosition = (-2/(r + docaH))/kappaBinWidth;
+	for (double docaScan = minDocaScan_; docaScan < maxDocaScan_ + 0.5*docaBinWidth; docaScan += docaBinWidth) {
+	  // Start from first allowed kappa bin (must be kappaScan >= -2/(r + docaScan))
+	  double firstKappa = -maxKappaScan_;
+	  if (-2/(r + docaScan) > firstKappa) {
+	    int binPosition = (-2/(r + docaScan))/kappaBinWidth;
 	    firstKappa = (binPosition - 0.5)*kappaBinWidth;
 	  }
-	  for (double kappaH = firstKappa; kappaH < 2/(r - docaH); kappaH += kappaBinWidth) {
-	    double akappa = (2*docaH + kappaH*docaH*docaH + kappaH*r*r)/(2*r);
-	    double hkappa = sqrt((docaH*kappaH + 1)*(docaH*kappaH + 1) - akappa*akappa);
+	  for (double kappaScan = firstKappa; kappaScan < min(maxKappaScan_ + 0.5*kappaBinWidth, 2/(r - docaScan)); kappaScan += kappaBinWidth) {
+	    if (kappaScan > -minKappaScan_ + 0.5*kappaBinWidth && kappaScan < minKappaScan_ - 0.5*kappaBinWidth)  // skip irrelevant values for histogram
+	      continue;
+	    double akappa = (2*docaScan + kappaScan*docaScan*docaScan + kappaScan*r*r)/(2*r);
+	    double hkappa = sqrt((docaScan*kappaScan + 1)*(docaScan*kappaScan + 1) - akappa*akappa);
 	    for (int sign = -1; sign <= 1; sign += 2) {
 	      double kappax = akappa*x/r - sign*hkappa*y/r;
 	      double kappay = akappa*y/r + sign*hkappa*x/r;
@@ -290,15 +311,15 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	      double phiHit = atan2(y, x);
 	      double phiD = atan2(kappay, kappax);
 	      int rot = -2*(int((phiHit - phiD + 2*M_PI)/M_PI)%2) + 1;  // hit position wrt. poca: +1 = anticlockwise; -1 = clockwise
-	      double doca = rot*docaH;
-	      double kappa = rot*kappaH;
+	      double doca = rot*docaScan;
+	      double kappa = rot*kappaScan;
 	      if (fabs(kappa) < 1.e-6)
 		kappa = (kappa >= 0) ? 1.e-6 : -1.e6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
 	      double phi = phiD + rot*(M_PI/2.);
 	      phi += -2.*M_PI*(int((phi + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
 	      double xc = (doca - 1./kappa)*sin(phi);
 	      double yc = -(doca - 1./kappa)*cos(phi);
-	      for (double z0 = -maxAbsZ0_ + z0BinWidth/2; z0 < maxAbsZ0_; z0 += z0BinWidth) {
+	      for (double z0 = minZ0_ + z0BinWidth/2; z0 < maxZ0_; z0 += z0BinWidth) {
 		double st = 1./kappa*(atan2(kappa*(y - yc), kappa*(x - xc)) - phi + M_PI/2.);
 		if (st < 0)  // rotation angle has crossed the +/-PI border
 		  st += 2.*M_PI/fabs(kappa);
@@ -332,45 +353,83 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 void 
 HoughCheckOnTracks::beginJob()
 {
-  // Book 5D histogram
-  if (maxAbsDoca_ <= 0. || maxAbsDoca_ > 550.) {
-    cout << "Invalid maxAbsDoca parameter (" << maxAbsDoca_ << " mm). Valid range is 0. < maxAbsDoca <= 550 mm. No histogram booked." << endl;
-    return;
-  }
+  // Create tree, with branches
+  trackTree_.reset(new TTree("trackTree", "Fitted track parameters"));
+  trackTree_->Branch("doca", &vDoca_);
+  trackTree_->Branch("kappa", &vKappa_);
+  trackTree_->Branch("phi", &vPhi_);
+  trackTree_->Branch("z0", &vZ0_);
+  trackTree_->Branch("lambda", &vLambda_);
+  trackTree_->Branch("algo", &vAlgo_);
+  trackTree_->SetDirectory(0);
+
+  // Set edges for histogram axes and scan ranges
   if (nBinsDoca_ <= 0 || nBinsDoca_ > 200) {
     cout << "Invalid nBinsDoca parameter (" << nBinsDoca_ << "). Valid range is 0 < nBinsDoca <= 200. No histogram booked." << endl;
     return;
   }
-  if (maxAbsKappa_ <= 0. || maxAbsKappa_ > 1./45.) {
-    cout << "Invalid maxAbsKappa parameter (" << maxAbsKappa_ << " mm^-1). Valid range is 0. < maxAbsKappa <= 1/45 mm. No histogram booked." << endl;
+  float docaBinWidth = (maxDoca_ - minDoca_)/nBinsDoca_; 
+  if (docaBinWidth <= 0) {
+    cout << "Invalid doca range: min(doca) >= max(doca). No histogram booked." << endl;
     return;
+  } else if (minDoca_ < 0 && maxDoca_ > 0) {  // shift the range so that 0 is a bin edge
+    float shift = docaBinWidth*int((maxDoca_ + 0.5*docaBinWidth)/docaBinWidth) - maxDoca_;
+    minDoca_ += shift;
+    maxDoca_ += shift;
+    minDocaScan_ = 0.5*docaBinWidth;
+    maxDocaScan_ = max(fabs(minDoca_), fabs(maxDoca_)) - 0.5*docaBinWidth;
+  } else {
+    minDocaScan_ = min(fabs(minDoca_), fabs(maxDoca_)) + 0.5*docaBinWidth;
+    maxDocaScan_ = max(fabs(minDoca_), fabs(maxDoca_)) - 0.5*docaBinWidth;
   }
   if (nBinsKappa_ <= 0 || nBinsKappa_ > 200) {
     cout << "Invalid nBinsKappa parameter (" << nBinsKappa_ << "). Valid range is 0 < nBinsKappa <= 200. No histogram booked." << endl;
     return;
   }
+  float kappaBinWidth = (maxKappa_ - minKappa_)/nBinsKappa_;
+  if (kappaBinWidth <= 0) {
+    cout << "Invalid kappa range: min(kappa) >= max(kappa). No histogram booked." << endl;
+    return;
+  } else if (minKappa_ < 0 && maxKappa_ > 0) {  // shift the range so that 0 is a bin edge
+    float shift = kappaBinWidth*int((maxKappa_ + 0.5*kappaBinWidth)/kappaBinWidth) - maxKappa_;
+    minKappa_ += shift;
+    maxKappa_ += shift;
+    minKappaScan_ = 0.5*kappaBinWidth;
+    maxKappaScan_ = max(fabs(minKappa_), fabs(maxKappa_)) - 0.5*kappaBinWidth;
+  } else {
+    minKappaScan_ = min(fabs(minKappa_), fabs(maxKappa_)) + 0.5*kappaBinWidth;
+    maxKappaScan_ = max(fabs(minKappa_), fabs(maxKappa_)) - 0.5*kappaBinWidth;
+  }
   if (nBinsPhi_ <= 0 || nBinsPhi_ > 200) {
     cout << "Invalid nBinsPhi parameter (" << nBinsPhi_ << "). Valid range is 0 < nBinsPhi <= 200. No histogram booked." << endl;
     return;
   }
-  if (maxAbsZ0_ <= 0 || maxAbsZ0_ > 600) {
-    cout << "Invalid maxAbsZ0 parameter (" << maxAbsZ0_ << " mm). Valid range is 0 < maxAbsZ0 <= 600. No histogram booked." << endl;
+  if (minPhi_ >= maxPhi_) {
+    cout << "Invalid phi range: min(phi) >= max(phi). No histogram booked." << endl;
+    return;
+  } else if (minPhi_ < -2*M_PI || maxPhi_ > 2*M_PI) {
+    cout << "Invalid phi range. Valid range is -pi <= phi <= pi. No histogram booked." << endl;
     return;
   }
   if (nBinsZ0_ <= 0 || nBinsZ0_ > 200) {
     cout << "Invalid nBinsZ0 parameter (" << nBinsZ0_ << "). Valid range is 0 < nBinsZ0 <= 200. No histogram booked." << endl;
     return;
   }
-  if (maxAbsLambda_ <= 0 || maxAbsLambda_ > 1.4) {
-    cout << "Invalid maxAbsLambda parameter (" << maxAbsLambda_ << "). Valid range is 0 < maxAbsLambda <= 1.4. No histogram booked." << endl;
+  if (minZ0_ >= maxZ0_) {
+    cout << "Invalid z0 range: min(z0) >= max(z0). No histogram booked." << endl;
     return;
   }
   if (nBinsLambda_ <= 0 || nBinsLambda_ > 200) {
     cout << "Invalid nBinsLambda parameter (" << nBinsLambda_ << "). Valid range is 0 < nBinsLambda <= 200. No histogram booked." << endl;
     return;
   }
-  hHoughVotes_.reset(new TH5C("hHoughVotes", "helix Hough transform votes", nBinsDoca_, -maxAbsDoca_, maxAbsDoca_, nBinsKappa_, -maxAbsKappa_, maxAbsKappa_,
-			      nBinsPhi_, -M_PI, M_PI, nBinsZ0_, -maxAbsZ0_, maxAbsZ0_, nBinsLambda_, -maxAbsLambda_, maxAbsLambda_));
+  if (minLambda_ >= maxLambda_) {
+    cout << "Invalid lambda range: min(lambda) >= max(lambda). No histogram booked." << endl;
+    return;
+  }
+  // Book 5D histogram
+  hHoughVotes_.reset(new TH5C("hHoughVotes", "helix Hough transform votes", nBinsDoca_, minDoca_, maxDoca_, nBinsKappa_, minKappa_, maxKappa_,
+			      nBinsPhi_, minPhi_, maxPhi_, nBinsZ0_, minZ0_, maxZ0_, nBinsLambda_, minLambda_, maxLambda_));
   hHoughVotes_->SetDirectory(0);
 
   // Set content to -128 for all histogram bins, to use full 8-bit range
@@ -381,14 +440,6 @@ HoughCheckOnTracks::beginJob()
 	  for (int iLambda = 1; iLambda <= nBinsLambda_; iLambda++)
 	    hHoughVotes_->SetBinContent(iDoca, iKappa, iPhi, iZ0, iLambda, -128);
 
-  //  // Create tree, with branches
-  trackTree_.reset(new TTree("trackTree", "Fitted track parameters"));
-  trackTree_->Branch("doca", &vDoca_);
-  trackTree_->Branch("kappa", &vKappa_);
-  trackTree_->Branch("phi", &vPhi_);
-  trackTree_->Branch("z0", &vZ0_);
-  trackTree_->Branch("lambda", &vLambda_);
-  trackTree_->SetDirectory(0);
 }
 
 // ------------ method called once each job just after ending the event loop  ------------
