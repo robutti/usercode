@@ -203,7 +203,7 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	   << ", Nhits=" << itTrack->recHitsSize()
 	   << ", (vx,vy,vz)=(" << itTrack->vx() << "," << itTrack->vy() << "," << itTrack->vz() << ")"
 	   << ", doca=" << 10.*(itTrack->d0())
-	   << ", kappa=" << 1.139e-3*itTrack->charge()/(itTrack->pt())
+	   << ", kappa=" << -1.139e-3*itTrack->charge()/(itTrack->pt())
 	   << ", phi=" << itTrack->phi()
 	   << ", z0=" << 10.*(itTrack->dz())
 	   << ", lambda=" << itTrack->lambda()
@@ -220,7 +220,7 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	continue;
     }
     vDoca_.push_back(10.*(itTrack->d0()));
-    vKappa_.push_back(1.139e-3*itTrack->charge()/(itTrack->pt()));
+    vKappa_.push_back(-1.139e-3*itTrack->charge()/(itTrack->pt()));
     vPhi_.push_back(itTrack->phi());
     vZ0_.push_back(10.*(itTrack->dz()));
     vLambda_.push_back(itTrack->lambda());
@@ -230,7 +230,7 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
     int nhit = 0;
     for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
       if (verbosity_ > 2)
- 	cout << "hit #" << nhit;
+ 	cout << "hit #" << nhit++;
       TransientTrackingRecHit::RecHitPointer hit = builder_->build(&**i );
       // Keep only hits from selected layers
       DetId hitId = hit->geographicalId();
@@ -312,9 +312,9 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	      double phiD = atan2(kappay, kappax);
 	      int rot = -2*(int((phiHit - phiD + 2*M_PI)/M_PI)%2) + 1;  // hit position wrt. poca: +1 = anticlockwise; -1 = clockwise
 	      double doca = rot*docaScan;
-	      double kappa = rot*kappaScan;
+	      double kappa = -rot*kappaScan;
 	      if (fabs(kappa) < 1.e-6)
-		kappa = (kappa >= 0) ? 1.e-6 : -1.e6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
+		kappa = (kappa >= 0) ? 1.e-6 : -1.e-6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
 	      double phi = phiD + rot*(M_PI/2.);
 	      phi += -2.*M_PI*(int((phi + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
 	      double xc = (doca - 1./kappa)*sin(phi);
@@ -338,13 +338,11 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
       } else 
 	if (verbosity_ > 2)
 	  cout << " - invalid hit" << endl;
-      nhit++;
     }
     if (verbosity_ > 2)
       cout << endl;
     ntrk++;
   }
-  hHoughVotes_->Print("v");
   trackTree_->Fill();
 }
 
