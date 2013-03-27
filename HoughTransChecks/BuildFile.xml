@@ -1,13 +1,15 @@
 <use name="root"/>
+#<use name="rootcore"/>
+#<use name="rootcintex"/>
+#<use name="rootrflx"/>
 
 <use name="FWCore/Framework"/>
 <use name="FWCore/PluginManager"/>
-<use name="FWCore/ParameterSet"/>
 <use name="TrackingTools/Records"/>
 <use name="TrackingTools/TransientTrackingRecHit"/>
 <use name="TrackingTools/TrajectoryState"/>
 <use name="MagneticField/Engine"/>
+<use name="PhysicsTools/Utilities"/>
 
 <flags EDM_PLUGIN="1"/>
 <use name="DataFormats/TrackReco"/>
-
