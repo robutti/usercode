@@ -45,11 +45,21 @@
 #include "DataFormats/SiPixelDetId/interface/PXBDetId.h"
 #include "DataFormats/SiPixelDetId/interface/PXFDetId.h"
 #include "DataFormats/GeometryVector/interface/GlobalPoint.h"
+#include "MagneticField/Engine/interface/MagneticField.h"
+#include "DataFormats/GeometryVector/interface/GlobalVector.h"
+#include "TrackingTools/TrajectoryState/interface/FreeTrajectoryState.h"
+#include "TrackingTools/TrajectoryParametrization/interface/PerigeeTrajectoryParameters.h"
+#include "TrackingTools/TrajectoryState/interface/PerigeeConversions.h"
+#include "TrackingTools/PatternTools/interface/TSCPBuilderNoMaterial.h"
+#include "TrackingTools/TrajectoryState/interface/TrajectoryStateClosestToPoint.h"
 
 #include "ERobutti/HoughTransChecks/interface/TH5.h"
 #include "TFile.h"
 #include "TTree.h"
 #include "TString.h"
+#include "Math/RootFinder.h"
+#include "Math/WrappedTF1.h"
+#include "TF1.h"
 #include "TROOT.h"
 #include "TStyle.h"
 #include "TCanvas.h"
@@ -82,8 +92,12 @@ private:
   virtual void beginLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&);
   virtual void endLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&);
 
-  void plotHoughProjections(int iparX, int iparY);
-  
+  double fZDoca_(double* var, double* par);
+  double fZKappa_(double* var, double* par);
+  double fPhi_(double x, double y, int sign);
+  double fZ0_(double x, double y, double z);
+  double fTheta_(double x, double y, double z);
+
   // Parameters
   edm::InputTag trackTags_; //used to select what tracks to read from configuration file
   std::string builderName_;
@@ -93,16 +107,15 @@ private:
   double minDoca_, maxDoca_;
   const int nBinsDoca_;
   double minDocaScan_, maxDocaScan_;
-  double minKappa_, maxKappa_;
-  const int nBinsKappa_;
-  double minKappaScan_, maxKappaScan_;
+  double minSqrtK_, maxSqrtK_;
+  const int nBinsSqrtK_;
+  double minSqrtKScan_, maxSqrtKScan_;
   double minPhi_, maxPhi_;
   const int nBinsPhi_;
   double minZ0_, maxZ0_;
   const int nBinsZ0_;
-  double minLambda_, maxLambda_;
-  const int nBinsLambda_;
-  const int projectionPars_;
+  double minEta_, maxEta_;
+  const int nBinsEta_;
   const unsigned int verbosity_;
   const unsigned int printProgressFrequency_;
 
@@ -113,8 +126,13 @@ private:
   vector<double> vKappa_;
   vector<double> vPhi_;
   vector<double> vZ0_;
-  vector<double> vLambda_;
+  vector<double> vTheta_;
   vector<double> vAlgo_;
+  vector<vector<double> > vDocaExp_;
+  vector<vector<double> > vKappaExp_;
+  vector<vector<double> > vPhiExp_;
+  vector<vector<double> > vZ0Exp_;
+  vector<vector<double> > vThetaExp_;
 };
 
 //
@@ -135,29 +153,28 @@ HoughCheckOnTracks::HoughCheckOnTracks(const edm::ParameterSet& iConfig)
   algoSel_(iConfig.getParameter<vector<unsigned int> >("algoSel")),
   layerSel_(iConfig.getParameter<vector<unsigned int> >("layerSel")),
   nBinsDoca_(iConfig.getUntrackedParameter<int>("nBinsDoca", 100)),
-  nBinsKappa_(iConfig.getUntrackedParameter<int>("nBinsKappa", 100)),
+  nBinsSqrtK_(iConfig.getUntrackedParameter<int>("nBinsSqrtK", 100)),
   nBinsPhi_(iConfig.getUntrackedParameter<int>("nBinsPhi", 100)),
   nBinsZ0_(iConfig.getUntrackedParameter<int>("nBinsZ0", 100)),
-  nBinsLambda_(iConfig.getUntrackedParameter<int>("nBinsLambda", 100)),
-  projectionPars_(iConfig.getUntrackedParameter<int>("projectionPars", 0)),
+  nBinsEta_(iConfig.getUntrackedParameter<int>("nBinsEta", 100)),
   verbosity_(iConfig.getUntrackedParameter<unsigned int>("verbosity", 0)),
   printProgressFrequency_(iConfig.getUntrackedParameter<unsigned int>("printProgressFrequency", 1000))
 {
   vector<double> rangeDoca = iConfig.getUntrackedParameter<vector<double> >("rangeDoca", {-44., 44.});  // radius of inner pixel layer
   minDoca_ = rangeDoca[0];
   maxDoca_ = rangeDoca[1];
-  vector<double> rangeKappa = iConfig.getUntrackedParameter<vector<double> >("rangeKappa", {-1./45, 1./45});  // larger than radius of inner pixel layer
-  minKappa_ = rangeKappa[0];
-  maxKappa_ = rangeKappa[1];
+  vector<double> rangeSqrtK = iConfig.getUntrackedParameter<vector<double> >("rangeSqrtK", {-0.075, 0.075});  // corresponding to ~200 MeV (~18 cm radius)
+  minSqrtK_ = rangeSqrtK[0];
+  maxSqrtK_ = rangeSqrtK[1];
   vector<double> rangePhi = iConfig.getUntrackedParameter<vector<double> >("rangePhi", {-M_PI, M_PI});
   minPhi_ = rangePhi[0];
   maxPhi_ = rangePhi[1];
   vector<double> rangeZ0 = iConfig.getUntrackedParameter<vector<double> >("rangeZ0", {-265., 265.});  // pixel barrel half-length
   minZ0_ = rangeZ0[0];
   maxZ0_ = rangeZ0[1];
-  vector<double> rangeLambda = iConfig.getUntrackedParameter<vector<double> >("rangeLambda", {-1.40, 1.40});  // tracker eta acceptance
-  minLambda_ = rangeLambda[0];
-  maxLambda_ = rangeLambda[1];
+  vector<double> rangeEta = iConfig.getUntrackedParameter<vector<double> >("rangeEta", {-2.5, 2.5});  // tracker eta acceptance
+  minEta_ = rangeEta[0];
+  maxEta_ = rangeEta[1];
 }
 
 
@@ -195,18 +212,35 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
   vKappa_.clear();
   vPhi_.clear();
   vZ0_.clear();
-  vLambda_.clear();
+  vTheta_.clear();
+  vAlgo_.clear();
+  vDocaExp_.clear();
+  vKappaExp_.clear();
+  vPhiExp_.clear();
+  vZ0Exp_.clear();
+  vThetaExp_.clear();
+
   for(TrackCollection::const_iterator itTrack = tracks->begin(); itTrack != tracks->end(); ++itTrack) {
+
+    // Get fitted track parameters in perigee convention
+    edm::ESHandle<MagneticField> theMF;
+    iSetup.get<IdealMagneticFieldRecord>().get(theMF);
+    GlobalPoint refPoint(itTrack->vx(), itTrack->vy(), itTrack->vz());
+    GlobalVector pTrack(itTrack->px(), itTrack->py(), itTrack->pz());
+    FreeTrajectoryState fts(refPoint, pTrack, TrackCharge(itTrack->charge()), theMF.product());
+    TSCPBuilderNoMaterial tscpBuilder;
+    TrajectoryStateClosestToPoint tsAtClosestApproach = tscpBuilder(fts, GlobalPoint(0.,0.,0.));
+    PerigeeTrajectoryParameters perigeePars = tsAtClosestApproach.perigeeParameters();
+
     if (verbosity_ > 1)
       cout << "Track #" << ntrk << " with q=" << itTrack->charge() 
-	   << ", pT=" << itTrack->pt() << " GeV, eta=" << itTrack->eta() 
 	   << ", Nhits=" << itTrack->recHitsSize()
 	   << ", (vx,vy,vz)=(" << itTrack->vx() << "," << itTrack->vy() << "," << itTrack->vz() << ")"
-	   << ", doca=" << 10.*(itTrack->d0())
-	   << ", kappa=" << -1.139e-3*itTrack->charge()/(itTrack->pt())
-	   << ", phi=" << itTrack->phi()
-	   << ", z0=" << 10.*(itTrack->dz())
-	   << ", lambda=" << itTrack->lambda()
+           << ", doca=" << perigeePars.transverseImpactParameter()
+           << ", kappa=" << perigeePars.transverseCurvature()
+	   << ", phi=" << perigeePars.phi()
+           << ", z0=" << perigeePars.longitudinalImpactParameter()
+	   << ", theta=" << perigeePars.theta()
 	   << ", algo=" << itTrack->algoName(itTrack->algo()).c_str() << endl;
     if (algoSel_.size() != 0) {  // empty vector means 'keep all tracks'
       bool validAlgo = false;
@@ -219,15 +253,20 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
       if (!validAlgo)
 	continue;
     }
-    vDoca_.push_back(10.*(itTrack->d0()));
-    vKappa_.push_back(-1.139e-3*itTrack->charge()/(itTrack->pt()));
-    vPhi_.push_back(itTrack->phi());
-    vZ0_.push_back(10.*(itTrack->dz()));
-    vLambda_.push_back(itTrack->lambda());
+    vDoca_.push_back(10.*perigeePars.transverseImpactParameter());
+    vKappa_.push_back(perigeePars.transverseCurvature()/10.);
+    vPhi_.push_back(perigeePars.phi());
+    vZ0_.push_back(10.*perigeePars.longitudinalImpactParameter());
+    vTheta_.push_back(perigeePars.theta());
     vAlgo_.push_back(itTrack->algo());
     if (!(hHoughVotes_.get()))
       return;
     int nhit = 0;
+    vector<double> vDocaHit;
+    vector<double> vKappaHit;
+    vector<double> vPhiHit;
+    vector<double> vZ0Hit;
+    vector<double> vThetaHit;
     for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
       if (verbosity_ > 2)
  	cout << "hit #" << nhit++;
@@ -288,30 +327,87 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	double y = 10.*hitPosition.y();
 	double z = 10.*hitPosition.z();
 	double r = sqrt(x*x + y*y);
+	double phiHit = atan2(y, x);
+	// Get expected parameters based on fitted remaining ones
+	ROOT::Math::RootFinder rootFinder;
+	// Expected DOCA
+	TF1 tfZDoca("tfZDoca", this, &HoughCheckOnTracks::fZDoca_, 0., 100., 4, "this", "fZDoca_");
+	ROOT::Math::WrappedTF1 wfZDoca(tfZDoca);
+	rootFinder.SetFunction(wfZDoca, 0., 100.);
+	// Get both solutions and keep closer to fitted value
+	double zPar[4];
+	zPar[0] = x;
+	zPar[1] = y;
+	zPar[2] = 1;
+	zPar[3] = 1000.;
+	wfZDoca.SetParameters(zPar);
+	rootFinder.Solve();
+	double doca1 = (fabs(wfZDoca.Parameters()[3]) < 0.05) ? rootFinder.Root() : 1.e10;
+	doca1 *= vDoca_.back()/fabs(vDoca_.back());  // put "right" sign
+	zPar[2] = -1;
+	zPar[3] = 1000.;
+	wfZDoca.SetParameters(zPar);
+	rootFinder.Solve();
+	double doca2 = (fabs(wfZDoca.Parameters()[3]) < 0.05) ? rootFinder.Root() : 1.e10;
+	doca2 *= vDoca_.back()/fabs(vDoca_.back());  // put "right" sign
+	double bestDoca = (fabs(doca1 - vDoca_.back()) < fabs(doca2 - vDoca_.back())) ? doca1 : doca2;
+	vDocaHit.push_back(bestDoca);
+	// Expected kappa
+	double kappaMMin = (vDoca_.back()*vKappa_.back() < 0) ? 1.e-6 : -2./(r + vDoca_.back());
+	double kappaMMax = (vDoca_.back()*vKappa_.back() < 0) ? 0.01 : -1.e-6;
+	TF1 tfZKappa("tfZKappa", this, &HoughCheckOnTracks::fZKappa_, kappaMMin, kappaMMax, 4, "this", "fZKappa_");
+	ROOT::Math::WrappedTF1 wfZKappa(tfZKappa);
+	rootFinder.SetFunction(wfZKappa, kappaMMin, kappaMMax);
+	// Get both solutions and keep closer to fitted value
+	zPar[2] = 1;
+	zPar[3] = 1000.;
+	wfZKappa.SetParameters(zPar);
+	rootFinder.Solve();
+	double kappa1 = (fabs(wfZKappa.Parameters()[3]) < 0.05) ? rootFinder.Root() : 1.e10;
+	kappa1 = (kappa1*vKappa_.back() > 0) ? kappa1 : -kappa1;  // put "right" sign
+	zPar[2] = -1;
+	zPar[3] = 1000.;
+	wfZKappa.SetParameters(zPar);
+	rootFinder.Solve();
+	double kappa2 = (fabs(wfZKappa.Parameters()[3]) < 0.05) ? rootFinder.Root() : 1.e10;
+	kappa2 = (kappa2*vKappa_.back() > 0) ? kappa2 : -kappa2;  // put "right" sign
+	double bestKappa = (fabs(kappa1 - vKappa_.back()) < fabs(kappa2 - vKappa_.back())) ? kappa1 : kappa2;
+	vKappaHit.push_back(bestKappa);
+	// Expected phi
+	double phi1 = fPhi_(x, y, 1);
+	double phi2 = fPhi_(x, y, -1);
+	double bestPhi = (fabs(phi1 - vPhi_.back()) < fabs(phi2 - vPhi_.back())) ? phi1 : phi2;
+	vPhiHit.push_back(bestPhi);
+	// Expected z0
+	vZ0Hit.push_back(fZ0_(x, y, z));
+	// Expected theta
+	vThetaHit.push_back(fTheta_(x, y, z));
+	// Loop on histogram bins
 	double docaBinWidth = (maxDoca_ - minDoca_)/nBinsDoca_;
-	double kappaBinWidth = (maxKappa_ - minKappa_)/nBinsKappa_;
+	double sqrtKBinWidth = (maxSqrtK_ - minSqrtK_)/nBinsSqrtK_;
 	double z0BinWidth = (maxZ0_ - minZ0_)/nBinsZ0_;
 	// Loop on allowed histogram bins (first doca, then kappa, then phi) and fill histogram
 	for (double docaScan = minDocaScan_; docaScan < maxDocaScan_ + 0.5*docaBinWidth; docaScan += docaBinWidth) {
-	  // Start from first allowed kappa bin (must be kappaScan >= -2/(r + docaScan))
-	  double firstKappa = -maxKappaScan_;
-	  if (-2/(r + docaScan) > firstKappa) {
-	    int binPosition = (-2/(r + docaScan))/kappaBinWidth;
-	    firstKappa = (binPosition - 0.5)*kappaBinWidth;
+	  // Start from first allowed sqrtK bin (must be kappaScan >= -2/(r + docaScan))
+	  double firstSqrtK = -maxSqrtKScan_;
+	  if (-2/(r + docaScan) > -firstSqrtK*firstSqrtK) {
+	    int binPosition = -sqrt(2/(r + docaScan))/sqrtKBinWidth;
+	    firstSqrtK = (binPosition - 0.5)*sqrtKBinWidth;
 	  }
-	  for (double kappaScan = firstKappa; kappaScan < min(maxKappaScan_ + 0.5*kappaBinWidth, 2/(r - docaScan)); kappaScan += kappaBinWidth) {
-	    if (kappaScan > -minKappaScan_ + 0.5*kappaBinWidth && kappaScan < minKappaScan_ - 0.5*kappaBinWidth)  // skip irrelevant values for histogram
+	  for (double sqrtKScan = firstSqrtK; sqrtKScan < min(maxSqrtKScan_ + 0.5*sqrtKBinWidth, sqrt(2/(r - docaScan))); sqrtKScan += sqrtKBinWidth) {
+	    if (sqrtKScan > -minSqrtKScan_ + 0.5*sqrtKBinWidth && sqrtKScan < minSqrtKScan_ - 0.5*sqrtKBinWidth)  // skip irrelevant values for histogram
 	      continue;
+	    double kappaScan = sqrtKScan*fabs(sqrtKScan);
 	    double akappa = (2*docaScan + kappaScan*docaScan*docaScan + kappaScan*r*r)/(2*r);
 	    double hkappa = sqrt((docaScan*kappaScan + 1)*(docaScan*kappaScan + 1) - akappa*akappa);
 	    for (int sign = -1; sign <= 1; sign += 2) {
 	      double kappax = akappa*x/r - sign*hkappa*y/r;
 	      double kappay = akappa*y/r + sign*hkappa*x/r;
 	      // Convert to perigee parameters
-	      double phiHit = atan2(y, x);
 	      double phiD = atan2(kappay, kappax);
 	      int rot = -2*(int((phiHit - phiD + 2*M_PI)/M_PI)%2) + 1;  // hit position wrt. poca: +1 = anticlockwise; -1 = clockwise
 	      double doca = rot*docaScan;
+	      //	      double kappa = -rot*kappaScan;
 	      double kappa = -rot*kappaScan;
 	      if (fabs(kappa) < 1.e-6)
 		kappa = (kappa >= 0) ? 1.e-6 : -1.e-6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
@@ -325,12 +421,10 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 		  st += 2.*M_PI/fabs(kappa);
 		else if (st > 2.*M_PI/fabs(kappa))
 		  st -= 2.*M_PI/fabs(kappa);
-// 		  cout << "(doca, kappa, phi, z0, psi, st) = "
-// 		       << "(" << doca << ", " << kappa << ", " << phi << ", " << z0 << ", " << psi << ", " << st << ")" << endl;
 		double lambda = atan((z - z0)/st);
-// 		cout << "(doca, kappa, phi, z0, lambda) = "
-// 		     << "(" << doca << ", " << kappa << ", " << phi << ", " << z0 << ", " << lambda << ")" << endl;
-		hHoughVotes_->Fill(doca, kappa, phi, z0, lambda);
+		double eta = -log(tan((M_PI/2. - lambda)/2.));
+//		hHoughVotes_->Fill(doca, kappa, phi, z0, eta);
+		hHoughVotes_->Fill(doca, -rot*sqrtKScan, phi, z0, eta);
 	      }
 	    }
 	  }
@@ -339,6 +433,11 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	if (verbosity_ > 2)
 	  cout << " - invalid hit" << endl;
     }
+    vDocaExp_.push_back(vDocaHit);
+    vKappaExp_.push_back(vKappaHit);
+    vPhiExp_.push_back(vPhiHit);
+    vZ0Exp_.push_back(vZ0Hit);
+    vThetaExp_.push_back(vThetaHit);
     if (verbosity_ > 2)
       cout << endl;
     ntrk++;
@@ -357,8 +456,13 @@ HoughCheckOnTracks::beginJob()
   trackTree_->Branch("kappa", &vKappa_);
   trackTree_->Branch("phi", &vPhi_);
   trackTree_->Branch("z0", &vZ0_);
-  trackTree_->Branch("lambda", &vLambda_);
+  trackTree_->Branch("theta", &vTheta_);
   trackTree_->Branch("algo", &vAlgo_);
+  trackTree_->Branch("docaExp", &vDocaExp_);
+  trackTree_->Branch("kappaExp", &vKappaExp_);
+  trackTree_->Branch("phiExp", &vPhiExp_);
+  trackTree_->Branch("z0Exp", &vZ0Exp_);
+  trackTree_->Branch("thetaExp", &vThetaExp_);
   trackTree_->SetDirectory(0);
 
   // Set edges for histogram axes and scan ranges
@@ -380,23 +484,23 @@ HoughCheckOnTracks::beginJob()
     minDocaScan_ = min(fabs(minDoca_), fabs(maxDoca_)) + 0.5*docaBinWidth;
     maxDocaScan_ = max(fabs(minDoca_), fabs(maxDoca_)) - 0.5*docaBinWidth;
   }
-  if (nBinsKappa_ <= 0 || nBinsKappa_ > 200) {
-    cout << "Invalid nBinsKappa parameter (" << nBinsKappa_ << "). Valid range is 0 < nBinsKappa <= 200. No histogram booked." << endl;
+  if (nBinsSqrtK_ <= 0 || nBinsSqrtK_ > 200) {
+    cout << "Invalid nBinsSqrtK parameter (" << nBinsSqrtK_ << "). Valid range is 0 < nBinsSqrtK <= 200. No histogram booked." << endl;
     return;
   }
-  float kappaBinWidth = (maxKappa_ - minKappa_)/nBinsKappa_;
-  if (kappaBinWidth <= 0) {
-    cout << "Invalid kappa range: min(kappa) >= max(kappa). No histogram booked." << endl;
+  float sqrtKBinWidth = (maxSqrtK_ - minSqrtK_)/nBinsSqrtK_;
+  if (sqrtKBinWidth <= 0) {
+    cout << "Invalid sqrtK range: min(sqrtK) >= max(sqrtK). No histogram booked." << endl;
     return;
-  } else if (minKappa_ < 0 && maxKappa_ > 0) {  // shift the range so that 0 is a bin edge
-    float shift = kappaBinWidth*int((maxKappa_ + 0.5*kappaBinWidth)/kappaBinWidth) - maxKappa_;
-    minKappa_ += shift;
-    maxKappa_ += shift;
-    minKappaScan_ = 0.5*kappaBinWidth;
-    maxKappaScan_ = max(fabs(minKappa_), fabs(maxKappa_)) - 0.5*kappaBinWidth;
+  } else if (minSqrtK_ < 0 && maxSqrtK_ > 0) {  // shift the range so that 0 is a bin edge
+    float shift = sqrtKBinWidth*int((maxSqrtK_ + 0.5*sqrtKBinWidth)/sqrtKBinWidth) - maxSqrtK_;
+    minSqrtK_ += shift;
+    maxSqrtK_ += shift;
+    minSqrtKScan_ = 0.5*sqrtKBinWidth;
+    maxSqrtKScan_ = max(fabs(minSqrtK_), fabs(maxSqrtK_)) - 0.5*sqrtKBinWidth;
   } else {
-    minKappaScan_ = min(fabs(minKappa_), fabs(maxKappa_)) + 0.5*kappaBinWidth;
-    maxKappaScan_ = max(fabs(minKappa_), fabs(maxKappa_)) - 0.5*kappaBinWidth;
+    minSqrtKScan_ = min(fabs(minSqrtK_), fabs(maxSqrtK_)) + 0.5*sqrtKBinWidth;
+    maxSqrtKScan_ = max(fabs(minSqrtK_), fabs(maxSqrtK_)) - 0.5*sqrtKBinWidth;
   }
   if (nBinsPhi_ <= 0 || nBinsPhi_ > 200) {
     cout << "Invalid nBinsPhi parameter (" << nBinsPhi_ << "). Valid range is 0 < nBinsPhi <= 200. No histogram booked." << endl;
@@ -417,26 +521,26 @@ HoughCheckOnTracks::beginJob()
     cout << "Invalid z0 range: min(z0) >= max(z0). No histogram booked." << endl;
     return;
   }
-  if (nBinsLambda_ <= 0 || nBinsLambda_ > 200) {
-    cout << "Invalid nBinsLambda parameter (" << nBinsLambda_ << "). Valid range is 0 < nBinsLambda <= 200. No histogram booked." << endl;
+  if (nBinsEta_ <= 0 || nBinsEta_ > 200) {
+    cout << "Invalid nBinsEta parameter (" << nBinsEta_ << "). Valid range is 0 < nBinsEta <= 200. No histogram booked." << endl;
     return;
   }
-  if (minLambda_ >= maxLambda_) {
-    cout << "Invalid lambda range: min(lambda) >= max(lambda). No histogram booked." << endl;
+  if (minEta_ >= maxEta_) {
+    cout << "Invalid eta range: min(eta) >= max(eta). No histogram booked." << endl;
     return;
   }
   // Book 5D histogram
-  hHoughVotes_.reset(new TH5C("hHoughVotes", "helix Hough transform votes", nBinsDoca_, minDoca_, maxDoca_, nBinsKappa_, minKappa_, maxKappa_,
-			      nBinsPhi_, minPhi_, maxPhi_, nBinsZ0_, minZ0_, maxZ0_, nBinsLambda_, minLambda_, maxLambda_));
+  hHoughVotes_.reset(new TH5C("hHoughVotes", "helix Hough transform votes", nBinsDoca_, minDoca_, maxDoca_, nBinsSqrtK_, minSqrtK_, maxSqrtK_,
+			      nBinsPhi_, minPhi_, maxPhi_, nBinsZ0_, minZ0_, maxZ0_, nBinsEta_, minEta_, maxEta_));
   hHoughVotes_->SetDirectory(0);
 
   // Set content to -128 for all histogram bins, to use full 8-bit range
   for (int iDoca = 1; iDoca <= nBinsDoca_; iDoca++)
-    for (int iKappa = 1; iKappa <= nBinsKappa_; iKappa++)
+    for (int iSqrtK = 1; iSqrtK <= nBinsSqrtK_; iSqrtK++)
       for (int iPhi = 1; iPhi <= nBinsPhi_; iPhi++)
 	for (int iZ0 = 1; iZ0 <= nBinsZ0_; iZ0++)
-	  for (int iLambda = 1; iLambda <= nBinsLambda_; iLambda++)
-	    hHoughVotes_->SetBinContent(iDoca, iKappa, iPhi, iZ0, iLambda, -128);
+	  for (int iEta = 1; iEta <= nBinsEta_; iEta++)
+	    hHoughVotes_->SetBinContent(iDoca, iSqrtK, iPhi, iZ0, iEta, -128);
 
 }
 
@@ -444,10 +548,6 @@ HoughCheckOnTracks::beginJob()
 void 
 HoughCheckOnTracks::endJob() 
 {
-  int iparX = projectionPars_/10;
-  int iparY = projectionPars_%10;
-  if (iparX >= 0 && iparX <= 4 && iparY >= 0 && iparY <= 4 && iparX != iparY)
-    plotHoughProjections(iparX, iparY);
   TFile outRootFile("houghCheck_tracks.root", "RECREATE");
   hHoughVotes_->Write();
   trackTree_->Write();
@@ -497,136 +597,98 @@ HoughCheckOnTracks::fillDescriptions(edm::ConfigurationDescriptions& description
  //descriptions.addDefault(desc);
 }
 
-// ------------ method to plot projection histograms for Hough votes  ------------
-void
-HoughCheckOnTracks::plotHoughProjections(int iparX, int iparY) {
-  // Build all-events vectors from tree (per-event) entries
-  vector<double> vPar[5];
-  // Loop on tree
-  for (int iEv = 0; iEv < trackTree_->GetEntries(); iEv++) {
-    long tEntry = trackTree_->LoadTree(iEv);
-    trackTree_->GetEntry(tEntry);
-    for (unsigned int iTk = 0; iTk < vDoca_.size(); iTk++) {
-      vPar[0].push_back(vDoca_.at(iTk));
-      vPar[1].push_back(vKappa_.at(iTk));
-      vPar[2].push_back(vPhi_.at(iTk));
-      vPar[3].push_back(vZ0_.at(iTk));
-      vPar[4].push_back(vLambda_.at(iTk));
-    }
-  }
 
-  // Index names, axes, etc.
-  TString axisName[5];
-  axisName[0] = "x";
-  axisName[1] = "y";
-  axisName[2] = "z";
-  axisName[3] = "u";
-  axisName[4] = "v";
-  TString parName[5];
-  parName[0] = "doca";
-  parName[1] = "kappa";
-  parName[2] = "phi";
-  parName[3] = "z0";
-  parName[4] = "lambda";
-  TAxis* axis[5];
-  axis[0] = hHoughVotes_->GetXaxis();
-  axis[1] = hHoughVotes_->GetYaxis();
-  axis[2] = hHoughVotes_->GetZaxis();
-  axis[3] = hHoughVotes_->GetUaxis();
-  axis[4] = hHoughVotes_->GetVaxis();
-  int iProjAxis[3];
-  unsigned int nProj = 0;
-  for (int iAxis = 0; iAxis < 5; iAxis++)
-    if (iAxis != iparX && iAxis != iparY) {
-      iProjAxis[nProj++] = iAxis;
-      if (nProj == 3)
-	break;
-    }
+// ------------ function to zero to get doca given kappa and phi  ------------
 
-  // Set up graphics
-  TString psFileName = "houghVoteProjections.ps";
-  TString openPsStr = psFileName + "[";
-  TString closePsStr = psFileName + "]";
-  gROOT->SetStyle("Plain");
-  gStyle->SetPalette(1);
-  gStyle->SetOptFit(0001);
-  gStyle->SetOptStat(0);
-  double maxVote = hHoughVotes_->GetMaximum() + 128;
-  TCanvas cHoughProj("cHoughProj", "", 800, 1200);
-  TH2S* hProj[6];
-  TString hName, hTitle;
-  float rX = 0.05*(axis[iparX]->GetXmax() - axis[iparX]->GetXmin());
-  float rY = 0.05*(axis[iparY]->GetXmax() - axis[iparY]->GetXmin());
-  cHoughProj.Print(openPsStr);
-
-  //
-  TString projName = axisName[iparY] + axisName[iparX];
-  int iPad = 0;
-  cHoughProj.Divide(2, 3);
-  for (int iBin0 = 1; iBin0 <= axis[iProjAxis[0]]->GetNbins(); iBin0++) {
-    float par0 = axis[iProjAxis[0]]->GetBinCenter(iBin0);
-    stringstream par0Str;
-    par0Str << setprecision(4) << par0;
-    for (int iBin1 = 1; iBin1 <= axis[iProjAxis[1]]->GetNbins(); iBin1++) {
-      float par1 = axis[iProjAxis[1]]->GetBinCenter(iBin1);
-      stringstream par1Str;
-      par1Str << setprecision(4) << par1;
-      for (int iBin2 = 1; iBin2 <= axis[iProjAxis[2]]->GetNbins(); iBin2++) {
-	cHoughProj.cd(++iPad);
-	float par2 = axis[iProjAxis[2]]->GetBinCenter(iBin2);
-	stringstream par2Str;
-	par2Str << setprecision(4) << par2;
-	hName = TString("h") + parName[iparX] + parName[iparY] + 
-	  "-" + parName[iProjAxis[0]] + par0Str.str().c_str() + 
-	  "-" + parName[iProjAxis[1]] + par1Str.str().c_str() + 
-	  "-" + parName[iProjAxis[2]] + par2Str.str().c_str();
-	hTitle = parName[iparY] + " vs. " + parName[iparX] + ", " + 
-	  parName[iProjAxis[0]] + " = " + par0Str.str().c_str() + ", " +
-	  parName[iProjAxis[1]] + " = " + par1Str.str().c_str() + ", " +
-	  parName[iProjAxis[2]] + " = " + par2Str.str().c_str();
-	axis[iProjAxis[0]]->SetRange(iBin0, iBin0);
-	axis[iProjAxis[1]]->SetRange(iBin1, iBin1);
-	axis[iProjAxis[2]]->SetRange(iBin2, iBin2);
-	hProj[iPad - 1] = (TH2S*)(hHoughVotes_->Project5D(projName));
-	hProj[iPad - 1]->SetNameTitle(hName, hTitle);
-	// Add 128 to each projection bin
-	for (int iBinX = 1; iBinX <= hProj[iPad - 1]->GetNbinsX(); iBinX++)
-	  for (int iBinY = 1; iBinY <= hProj[iPad - 1]->GetNbinsY(); iBinY++)
-	    hProj[iPad - 1]->SetBinContent(iBinX, iBinY, hProj[iPad - 1]->GetBinContent(iBinX, iBinY) + 128);
-	hProj[iPad - 1]->SetMinimum(0.);
-	hProj[iPad - 1]->SetMaximum(maxVote);
-	hProj[iPad - 1]->Draw("COLZ");
-	// Draw circles around fitted track parameters
-	for (unsigned int iTkPar = 0; iTkPar < vPar[iProjAxis[0]].size(); iTkPar++) {
-	  if (vPar[iProjAxis[0]].at(iTkPar) > axis[iProjAxis[0]]->GetBinLowEdge(iBin0) &&
-	      vPar[iProjAxis[0]].at(iTkPar) <= axis[iProjAxis[0]]->GetBinUpEdge(iBin0) &&
-	      vPar[iProjAxis[1]].at(iTkPar) > axis[iProjAxis[1]]->GetBinLowEdge(iBin1) &&
-	      vPar[iProjAxis[1]].at(iTkPar) <= axis[iProjAxis[1]]->GetBinUpEdge(iBin1) &&
-	      vPar[iProjAxis[2]].at(iTkPar) > axis[iProjAxis[2]]->GetBinLowEdge(iBin2) &&
-	      vPar[iProjAxis[2]].at(iTkPar) <= axis[iProjAxis[2]]->GetBinUpEdge(iBin2)) {
-	    TEllipse* circle = new TEllipse(vPar[iparX].at(iTkPar), vPar[iparY].at(iTkPar), rX, rY);
-	    circle->SetLineWidth(2);
-	    circle->SetLineColor(kYellow);
-	    circle->SetFillStyle(0);
-	    circle->Draw();
-	  }
-	}
-	// Print page if complete      
-	if (iPad == 6) {
-	  cHoughProj.Update();
-	  cHoughProj.Print(psFileName);
-	  cHoughProj.Clear();
-	  cHoughProj.Divide(2, 3);
-	  iPad = 0;
-	}
-      }
-    }
-  }
-  cHoughProj.Update();
-  cHoughProj.Print(psFileName);
-
-  cHoughProj.Print(closePsStr);
+double HoughCheckOnTracks::fZDoca_(double* var, double* par)
+{
+  double x = par[0];
+  double y = par[1];
+  double r = sqrt(x*x + y*y);
+  double sign = par[2];
+  int signDoca = vDoca_.back()/fabs(vDoca_.back());
+  double kappaM = -signDoca*vKappa_.back();
+  double phiM = vPhi_.back() - signDoca*M_PI/2.;
+  phiM += -2.*M_PI*(int((phiM + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
+  double akappa = (2*var[0] + kappaM*var[0]*var[0] + kappaM*r*r)/(2*r);
+  double hkappa = sqrt((var[0]*kappaM + 1)*(var[0]*kappaM + 1) - akappa*akappa);
+  double rkappax = akappa*x - sign*hkappa*y;
+  double rkappay = akappa*y + sign*hkappa*x;
+  par[3] = atan2(rkappay, rkappax) - phiM;  // return parameter to check that angle is not supplementary
+  return rkappay/rkappax - tan(phiM);
 }
+
+
+// ------------ function to zero to get kappa given doca and phi  ------------
+
+double HoughCheckOnTracks::fZKappa_(double* var, double* par)
+{
+  double x = par[0];
+  double y = par[1];
+  double r = sqrt(x*x + y*y);
+  double sign = par[2];
+  double docaM = fabs(vDoca_.back());
+  int signDoca = vDoca_.back()/fabs(vDoca_.back());
+  double phiM = vPhi_.back() - signDoca*M_PI/2.;
+  phiM += -2.*M_PI*(int((phiM + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
+  double akappa = (2*docaM + var[0]*docaM*docaM + var[0]*r*r)/(2*r);
+  double hkappa = sqrt((docaM*var[0] + 1)*(docaM*var[0] + 1) - akappa*akappa);
+  double rkappax = akappa*x - sign*hkappa*y;
+  double rkappay = akappa*y + sign*hkappa*x;
+  par[3] = atan2(rkappay, rkappax) - phiM;  // return parameter to check that angle is not supplementary
+  return rkappay/rkappax - tan(phiM);
+}
+
+
+// ------------ function to get phi given doca and kappa  ------------
+
+double HoughCheckOnTracks::fPhi_(double x, double y, int sign)
+{
+  double r = sqrt(x*x + y*y);
+  double docaM = fabs(vDoca_.back());
+  int signDoca = vDoca_.back()/fabs(vDoca_.back());
+  double kappaM = -signDoca*vKappa_.back();
+  double akappa = (2*docaM + kappaM*docaM*docaM + kappaM*r*r)/(2*r);
+  double hkappa = sqrt((docaM*kappaM + 1)*(docaM*kappaM + 1) - akappa*akappa);
+  double rkappax = akappa*x - sign*hkappa*y;
+  double rkappay = akappa*y + sign*hkappa*x;
+  double phi = atan2(rkappay, rkappax) + signDoca*M_PI/2.;
+  phi += -2.*M_PI*(int((phi + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
+  return phi;
+}
+
+
+
+// ------------ function to get z0 given doca, kappa, phi, eta  ------------
+
+double HoughCheckOnTracks::fZ0_(double x, double y, double z)
+{
+  double xc = (vDoca_.back() - 1./vKappa_.back())*sin(vPhi_.back());
+  double yc = -(vDoca_.back() - 1./vKappa_.back())*cos(vPhi_.back());
+  double st = 1./vKappa_.back()*(atan2(vKappa_.back()*(y - yc), vKappa_.back()*(x - xc)) - vPhi_.back() + M_PI/2.);
+  if (st < 0)  // rotation angle has crossed the +/-PI border
+    st += 2.*M_PI/fabs(vKappa_.back());
+  else if (st > 2.*M_PI/fabs(vKappa_.back()))
+    st -= 2.*M_PI/fabs(vKappa_.back());
+  double lambda = M_PI/2. - vTheta_.back();
+  return z - st*tan(lambda);
+}
+
+
+// ------------ function to get theta given doca, kappa, phi, z0  ------------
+
+double HoughCheckOnTracks::fTheta_(double x, double y, double z)
+{
+  double xc = (vDoca_.back() - 1./vKappa_.back())*sin(vPhi_.back());
+  double yc = -(vDoca_.back() - 1./vKappa_.back())*cos(vPhi_.back());
+  double st = 1./vKappa_.back()*(atan2(vKappa_.back()*(y - yc), vKappa_.back()*(x - xc)) - vPhi_.back() + M_PI/2.);
+  if (st < 0)  // rotation angle has crossed the +/-PI border
+    st += 2.*M_PI/fabs(vKappa_.back());
+  else if (st > 2.*M_PI/fabs(vKappa_.back()))
+    st -= 2.*M_PI/fabs(vKappa_.back());
+  return M_PI/2. - atan((z - vZ0_.back())/st);
+}
+
 
 //define this as a plug-in
 DEFINE_FWK_MODULE(HoughCheckOnTracks);
