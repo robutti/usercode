@@ -2,6 +2,7 @@
 #include <sstream>
 #include <iomanip>
 #include <vector>
+#include <math.h>
 
 #include <TFile.h>
 #include <TString.h>
@@ -47,7 +48,7 @@ int main(int argc, char* argv[])
   TString strParX(argv[2]);
   TString strParY(argv[3]);
   int iParX = -1, iParY = -1;
-  TString parName[5] = {"doca", "kappa", "phi", "z0", "lambda"};
+  TString parName[5] = {"doca", "kappa", "phi", "z0", "eta"};
   TString axisName[5] = {"x", "y", "z", "u", "v"};
   for (int iPar = 0; iPar < 5; iPar++) {
     if (strParX.Atoi() == iPar || strParX == parName[iPar] || strParX == axisName[iPar])
@@ -66,27 +67,27 @@ int main(int argc, char* argv[])
   vector<double>* vKappaEv = 0;
   vector<double>* vPhiEv = 0;
   vector<double>* vZ0Ev = 0;
-  vector<double>* vLambdaEv = 0;
+  vector<double>* vThetaEv = 0;
   TBranch* bDocaEv = 0;
   TBranch* bKappaEv = 0;
   TBranch* bPhiEv = 0;
   TBranch* bZ0Ev = 0;
-  TBranch* bLambdaEv = 0;
+  TBranch* bThetaEv = 0;
   tTrackPar->SetBranchAddress("doca", &vDocaEv, &bDocaEv);
   tTrackPar->SetBranchAddress("kappa", &vKappaEv, &bKappaEv);
   tTrackPar->SetBranchAddress("phi", &vPhiEv, &bPhiEv);
   tTrackPar->SetBranchAddress("z0", &vZ0Ev, &bZ0Ev);
-  tTrackPar->SetBranchAddress("lambda", &vLambdaEv, &bLambdaEv);
+  tTrackPar->SetBranchAddress("theta", &vThetaEv, &bThetaEv);
   // Loop on tree
   for (int iEv = 0; iEv < tTrackPar->GetEntries(); iEv++) {
     long tEntry = tTrackPar->LoadTree(iEv);
     tTrackPar->GetEntry(tEntry);
     for (unsigned int iTk = 0; iTk < vDocaEv->size(); iTk++) {
       vPar[0].push_back(vDocaEv->at(iTk));
-      vPar[1].push_back(vKappaEv->at(iTk));
+      vPar[1].push_back(vKappaEv->at(iTk)/sqrt(fabs(vKappaEv->at(iTk))));
       vPar[2].push_back(vPhiEv->at(iTk));
       vPar[3].push_back(vZ0Ev->at(iTk));
-      vPar[4].push_back(vLambdaEv->at(iTk));
+      vPar[4].push_back(-log(tan((vThetaEv->at(iTk))/2.)));
     }
   }
 
