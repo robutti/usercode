@@ -8,8 +8,11 @@
 <use name="TrackingTools/Records"/>
 <use name="TrackingTools/TransientTrackingRecHit"/>
 <use name="TrackingTools/TrajectoryState"/>
+<use name="TrackingTools/PatternTools"/>
+<use name="RecoTracker/TkSeedingLayers"/>
 <use name="MagneticField/Engine"/>
 <use name="PhysicsTools/Utilities"/>
+<lib name="MathMore"/>
 
 <flags EDM_PLUGIN="1"/>
 <use name="DataFormats/TrackReco"/>
