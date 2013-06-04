@@ -589,6 +589,28 @@ Int_t TH5::Fill(Double_t x, Double_t y, Double_t z, Double_t u, Double_t v, Doub
 // }
 
 //______________________________________________________________________________
+Int_t TH5::FindBin(Double_t x, Double_t y, Double_t z, Double_t u, Double_t v)
+{
+//   Return Global bin number corresponding to x, y, z, u, v
+//   =======================================================
+//
+//      5-D histograms are represented with a one dimensional
+//      structure. This has the advantage that all existing functions, such as
+//      GetBinContent, GetBinError, GetBinFunction work for all dimensions.
+//      This function tries to extend the axis if the given point belongs to an
+//       under-/overflow bin AND if CanExtendAllAxes() is true.
+//     See also TH1::GetBin, TAxis::FindBin and TAxis::FindFixBin
+//   -*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
+
+  Int_t binx = fXaxis.FindBin(x);
+  Int_t biny = fYaxis.FindBin(y);
+  Int_t binz = fZaxis.FindBin(z);
+  Int_t binu = fUaxis.FindBin(u);
+  Int_t binv = fVaxis.FindBin(v);
+  return GetBin(binx, biny, binz, binu, binv);
+}
+
+//______________________________________________________________________________
 Double_t TH5::GetCorrelationFactor(Int_t axis1, Int_t axis2) const
 {
   //*-*-*-*-*-*-*-*Return correlation factor between axis1 and axis2*-*-*-*-*
