@@ -1,8 +1,11 @@
+#include <unistd.h>
 #include <iostream>
+#include <iomanip>
 #include <sstream>
 #include <iomanip>
 #include <vector>
 #include <math.h>
+#include <stdlib.h>
 
 #include <TFile.h>
 #include <TString.h>
@@ -20,21 +23,44 @@ using namespace std;
 
 int main(int argc, char* argv[])
 {
+  bool doBinClust = false;
+  int voteThr = 0;
+  // Get options
+  int option;
+  opterr = 0;
+  while ((option = getopt (argc, argv, "ct:")) != -1)
+    switch (option) {
+    case 'c':
+      doBinClust = true;
+      break;
+    case 't':
+      voteThr = atoi(optarg);
+      break;
+    case '?':
+      if (optopt == 't')
+	cerr << "Option -" << optopt << " requires an argument." << endl;
+      else if (isprint (optopt))
+	cerr << "Unknown option `-" << (char)optopt << "'." << endl;
+      else
+	cerr << "Unknown option character `" << hex << option << dec << "'." << endl;
+      return 1;
+    }
+
   // Check arguments
-  if (argc != 4) {
-    cout << "Usage: plotHoughProjections <input file name> <parX> <parY>" << endl;
+  if (argc - optind != 3) {
+    cerr << "Usage: plotHoughProjections [-c] [-t<vote threshold>]] <input file name> <parX> <parY>" << endl;
     return 1;
   }
-  char* inFileName = argv[1];
-  
+  char* inFileName = argv[optind];
+ 
   // Open input file and get objects
   TFile* inFile = new TFile(inFileName);
   if (inFile == 0) {
     cout << "Error opening input file " << inFileName << ". Abort." << endl;
     return 1;
   }
-  TH5C* hHoughVotes = (TH5C*)(inFile->Get("hHoughVotes"));
-  if (hHoughVotes == 0) {
+  TH5C* hHoughSingleBins = (TH5C*)(inFile->Get("hHoughVotes"));
+  if (hHoughSingleBins == 0) {
     cout << "Error getting votes histogram. Abort." << endl;
     return 1;
   }
@@ -45,8 +71,8 @@ int main(int argc, char* argv[])
   }
 
   // Get projection parameters
-  TString strParX(argv[2]);
-  TString strParY(argv[3]);
+  TString strParX(argv[optind + 1]);
+  TString strParY(argv[optind + 2]);
   int iParX = -1, iParY = -1;
   TString parName[5] = {"doca", "kappa", "phi", "z0", "eta"};
   TString axisName[5] = {"x", "y", "z", "u", "v"};
@@ -89,6 +115,54 @@ int main(int argc, char* argv[])
       vPar[3].push_back(vZ0Ev->at(iTk));
       vPar[4].push_back(-log(tan((vThetaEv->at(iTk))/2.)));
     }
+  }
+
+  // If needed, build new histogram with 4-bin clusters
+  TH5C* hHoughVotes;
+  if (doBinClust) {
+    cout << "Building 4-bin cluster histogram." << endl;
+    TAxis* xAxis = hHoughSingleBins->GetXaxis();
+    int nBinsX = xAxis->GetNbins();
+    float minX =  xAxis->GetXmin();
+    float maxX =  xAxis->GetXmax();
+    TAxis* yAxis = hHoughSingleBins->GetYaxis();
+    int nBinsY = yAxis->GetNbins();
+    float minY =  yAxis->GetXmin();
+    float maxY =  yAxis->GetXmax();
+    TAxis* zAxis = hHoughSingleBins->GetZaxis();
+    int nBinsZ = zAxis->GetNbins() - 1;
+    float minZ =  zAxis->GetXmin() + 0.5*zAxis->GetBinWidth(1);
+    float maxZ =  zAxis->GetXmax() - 0.5*zAxis->GetBinWidth(1);
+    TAxis* uAxis = hHoughSingleBins->GetUaxis();
+    int nBinsU = uAxis->GetNbins();
+    float minU =  uAxis->GetXmin();
+    float maxU =  uAxis->GetXmax();
+    TAxis* vAxis = hHoughSingleBins->GetVaxis();
+    int nBinsV = vAxis->GetNbins() - 1;
+    float minV =  vAxis->GetXmin() + 0.5*vAxis->GetBinWidth(1);
+    float maxV =  vAxis->GetXmax() - 0.5*vAxis->GetBinWidth(1);
+    TH5C* hHoughClusters = new TH5C("hHoughVotes", "helix Hough transform votes",
+				    nBinsX, minX, maxX, nBinsY, minY, maxY, nBinsZ, minZ, maxZ, nBinsU, minU, maxU, nBinsV, minV, maxV);
+    int iBin[5];
+    for (iBin[0] = 1; iBin[0] <= nBinsX; iBin[0]++)
+      for (iBin[1] = 1; iBin[1] <= nBinsY; iBin[1]++)
+	for (iBin[2] = 1; iBin[2] <= nBinsZ; iBin[2]++)
+	  for (iBin[3] = 1; iBin[3] <= nBinsU; iBin[3]++)
+	    for (iBin[4] = 1; iBin[4] <= nBinsV; iBin[4]++) {
+	      int clustCont = 384;  // = 3*128, so that the floor of the resulting content is still -128
+	      for (int iBinClust = 0; iBinClust < 4; iBinClust++) {
+		int bin2 = iBin[2] + (iBinClust & 1);
+		int bin4 = iBin[4] + (iBinClust/2 & 1);
+		clustCont += hHoughSingleBins->GetBinContent(iBin[0], iBin[1], bin2, iBin[3], bin4);
+	      }
+	      if (clustCont >= -128 + voteThr)
+		hHoughClusters->SetBinContent(iBin[0], iBin[1], iBin[2], iBin[3], iBin[4], clustCont);
+	      else 
+		hHoughClusters->SetBinContent(iBin[0], iBin[1], iBin[2], iBin[3], iBin[4], -128);
+	    }
+    hHoughVotes = hHoughClusters;
+  } else {
+    hHoughVotes = hHoughSingleBins;
   }
 
   // Index axes
@@ -155,8 +229,13 @@ int main(int argc, char* argv[])
 	hProj[iPad - 1]->SetNameTitle(hName, hTitle);
 	// Add 128 to each projection bin
 	for (int iBinX = 1; iBinX <= hProj[iPad - 1]->GetNbinsX(); iBinX++)
-	  for (int iBinY = 1; iBinY <= hProj[iPad - 1]->GetNbinsY(); iBinY++)
-	    hProj[iPad - 1]->SetBinContent(iBinX, iBinY, hProj[iPad - 1]->GetBinContent(iBinX, iBinY) + 128);
+	  for (int iBinY = 1; iBinY <= hProj[iPad - 1]->GetNbinsY(); iBinY++) {
+	    int binCont = hProj[iPad - 1]->GetBinContent(iBinX, iBinY) + 128;
+	    if (binCont >= voteThr)
+	      hProj[iPad - 1]->SetBinContent(iBinX, iBinY, binCont);
+	    else 
+	      hProj[iPad - 1]->SetBinContent(iBinX, iBinY, 0);
+	  }
 	hProj[iPad - 1]->SetMinimum(0.);
 	hProj[iPad - 1]->SetMaximum(maxVote);
 	hProj[iPad - 1]->Draw("COLZ");
@@ -170,7 +249,7 @@ int main(int argc, char* argv[])
 	      vPar[iProjAxis[2]].at(iTkPar) <= axis[iProjAxis[2]]->GetBinUpEdge(iBin2)) {
 	    TEllipse* circle = new TEllipse(vPar[iParX].at(iTkPar), vPar[iParY].at(iTkPar), rX, rY);
 	    circle->SetLineWidth(2);
-	    circle->SetLineColor(kYellow);
+	    circle->SetLineColor(kOrange);
 	    circle->SetFillStyle(0);
 	    circle->Draw();
 	  }
