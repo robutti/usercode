@@ -100,6 +100,7 @@ public:
 //  virtual void FillRandom(const char *fname, Int_t ntimes=5000);
 //  virtual void FillRandom(TH1 *h, Int_t ntimes=5000);
   
+  Int_t FindBin(Double_t x, Double_t y, Double_t z, Double_t u, Double_t v);
   Int_t GetBin(Int_t binx, Int_t biny, Int_t binz, Int_t binu, Int_t binv) const;
   using TH1::GetBinErrorLow;
   using TH1::GetBinErrorUp;
