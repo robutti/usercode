@@ -16,34 +16,27 @@
 
 using namespace std;
 
-void getPhiLambda(double hitPos[], double docaScan, double kappaScan, double z0, double htPar[][2])
+void getPhiTheta(double hitPos[], double htPar[])
 {
+  if (fabs(htPar[1]) < 1.e-6)
+    htPar[1] = (htPar[1] >= 0) ? 1.e-6 : -1.e-6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
   double r = sqrt(hitPos[0]*hitPos[0] + hitPos[1]*hitPos[1]);
-  double akappa = (2*docaScan + kappaScan*docaScan*docaScan + kappaScan*r*r)/(2*r);
-  double hkappa = sqrt((docaScan*kappaScan + 1)*(docaScan*kappaScan + 1) - akappa*akappa);
-  for (int iSol = 0; iSol < 2; iSol ++) {
-    double kappax = (akappa*hitPos[0] - (2*iSol - 1)*hkappa*hitPos[1])/r;
-    double kappay = (akappa*hitPos[1] + (2*iSol - 1)*hkappa*hitPos[0])/r;
-    // Convert to perigee parameters
-    double phiHit = atan2(hitPos[1], hitPos[0]);
-    double phiD = atan2(kappay, kappax);
-    int rot = -2*(int((phiHit - phiD + 2*M_PI)/M_PI)%2) + 1;  // hit position wrt. poca: +1 = anticlockwise; -1 = clockwise
-    htPar[0][iSol] = rot*docaScan;
-    htPar[1][iSol] = -rot*kappaScan;
-    if (fabs(htPar[1][iSol]) < 1.e-6)
-      htPar[1][iSol] = (htPar[1][iSol] >= 0) ? 1.e-6 : -1.e-6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
-    htPar[2][iSol] = phiD + rot*(M_PI/2.);
-    htPar[2][iSol] += -2.*M_PI*(int((htPar[2][iSol] + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
-    double xc = (htPar[0][iSol] - 1./htPar[1][iSol])*sin(htPar[2][iSol]);
-    double yc = -(htPar[0][iSol] - 1./htPar[1][iSol])*cos(htPar[2][iSol]);
-    double st = 1./htPar[1][iSol]*(atan2(htPar[1][iSol]*(hitPos[1] - yc), htPar[1][iSol]*(hitPos[0] - xc)) - htPar[2][iSol] + M_PI/2.);
-    if (st < 0)  // rotation angle has crossed the +/-PI border
-      st += 2.*M_PI/fabs(htPar[1][iSol]);
-    else if (st > 2.*M_PI/fabs(htPar[1][iSol]))
-      st -= 2.*M_PI/fabs(htPar[1][iSol]);
-    htPar[3][iSol] = z0;
-    htPar[4][iSol] = atan((hitPos[2] - z0)/st);
-  }
+  double akappa = (htPar[1]*htPar[0]*htPar[0] + htPar[1]*r*r - 2*htPar[0])/(2*r);
+  double hkappa = sqrt((1 - htPar[0]*htPar[1])*(1 - htPar[0]*htPar[1]) - akappa*akappa);
+  int signD = htPar[0]/fabs(htPar[0]);
+  double kappaxD = signD*(-akappa*hitPos[0]/r + hkappa*hitPos[1]/r);
+  double kappayD = signD*(-akappa*hitPos[1]/r - hkappa*hitPos[0]/r);
+  double phiD = atan2(kappayD, kappaxD);
+  htPar[2] = phiD + signD*(M_PI/2.);
+  htPar[2] += -2.*M_PI*(int((htPar[2] + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
+  double xc = (htPar[0] - 1./htPar[1])*sin(htPar[2]);
+  double yc = -(htPar[0] - 1./htPar[1])*cos(htPar[2]);
+  double st = 1./htPar[1]*(atan2(htPar[1]*(hitPos[1] - yc), htPar[1]*(hitPos[0] - xc)) - htPar[2] + M_PI/2.);
+  if (st < 0)  // rotation angle has crossed the +/-PI border
+    st += 2.*M_PI/fabs(htPar[1]);
+  else if (st > 2.*M_PI/fabs(htPar[1]))
+    st -= 2.*M_PI/fabs(htPar[1]);
+  htPar[4] = atan2(st, hitPos[2] - htPar[3]);
 }
 
 int main(int argc, char* argv[])
@@ -56,8 +49,8 @@ int main(int argc, char* argv[])
   const double maxPt = 10.;
   const double minZ0 = -100.;
   const double maxZ0 = 100.;
-  const double minLambda = -1.4;
-  const double maxLambda = 1.4;
+  const double minTheta = 0.16;
+  const double maxTheta = M_PI - 0.16;
   const double maxSt = 1000.;
 
   // Check arguments
@@ -92,35 +85,35 @@ int main(int argc, char* argv[])
   vector<double> vKappa;
   vector<double> vPhi;
   vector<double> vZ0;
-  vector<double> vLambda;
+  vector<double> vTheta;
   vector<double> vAlgo;
   tTrackPar.Branch("doca", &vDoca);
   tTrackPar.Branch("kappa", &vKappa);
   tTrackPar.Branch("phi", &vPhi);
   tTrackPar.Branch("z0", &vZ0);
-  tTrackPar.Branch("lambda", &vLambda);
+  tTrackPar.Branch("theta", &vTheta);
   tTrackPar.Branch("algo", &vAlgo);
   tTrackPar.SetDirectory(0);
 
   // Book 5D histogram
   double maxAbsKappa = 1.139e-3/minPt;
   TH5C hHoughVotes("hHoughVotes", "helix Hough transform votes", nBins, -maxAbsDoca, maxAbsDoca,
-		   nBins, -maxAbsKappa, maxAbsKappa, nBins, -M_PI, M_PI, nBins, minZ0, maxZ0, nBins, minLambda, maxLambda);
+		   nBins, -maxAbsKappa, maxAbsKappa, nBins, -M_PI, M_PI, nBins, minZ0, maxZ0, nBins, minTheta, maxTheta);
   hHoughVotes.SetDirectory(0);
   // Set content to -128 for all histogram bins, to use full 8-bit range
   for (int iDoca = 1; iDoca <= nBins; iDoca++)
     for (int iKappa = 1; iKappa <= nBins; iKappa++)
       for (int iPhi = 1; iPhi <= nBins; iPhi++)
 	for (int iZ0 = 1; iZ0 <= nBins; iZ0++)
-	  for (int iLambda = 1; iLambda <= nBins; iLambda++)
-	    hHoughVotes.SetBinContent(iDoca, iKappa, iPhi, iZ0, iLambda, -128);
+	  for (int iTheta = 1; iTheta <= nBins; iTheta++)
+	    hHoughVotes.SetBinContent(iDoca, iKappa, iPhi, iZ0, iTheta, -128);
 
   // Graph with helix points
   TGraph2D* grHelix;
 
   // Auxiliary arrays
   double hitPos[3];
-  double htPar[5][2];
+  double htPar[5];
 
   // Loop on tracks
   srand((unsigned int)time(0));  // Initialise random generator seed
@@ -133,7 +126,7 @@ int main(int argc, char* argv[])
     int charge = 2*(rand()%2) - 1;
     int sameSide = 2*(rand()%2) - 1;  // helix axis on same (+1) or opposite (-1) side wrt. POCA
     double z0Gen = minZ0 + (maxZ0 - minZ0)*(double)rand()/RAND_MAX;
-    double lambdaGen = minLambda + (maxLambda - minLambda)*(double)rand()/RAND_MAX;
+    double thetaGen = minTheta + (maxTheta - minTheta)*(double)rand()/RAND_MAX;
 
     // Get helix axis
     double absKappaGen = 1.139e-3/pt;
@@ -141,18 +134,21 @@ int main(int argc, char* argv[])
     double yC = (absDocaGen + sameSide/absKappaGen)*sin(phiPoca);
 
     // Fill parameter vectors
-    vDoca.push_back(charge*sameSide*absDocaGen);
-    vKappa.push_back(-charge*absKappaGen);
+    htPar[0]  = charge*sameSide*absDocaGen;
+    vDoca.push_back(htPar[0]);
+    htPar[1] = -charge*absKappaGen;
+    vKappa.push_back(htPar[1]);
     double phiGen = phiPoca + charge*sameSide*M_PI/2.;
     if (phiGen >= M_PI)
       phiGen -= 2*M_PI;  // map to range (-PI, PI)
     vPhi.push_back(phiGen);
-    vZ0.push_back(z0Gen);
-    vLambda.push_back(lambdaGen);
+    htPar[3] = z0Gen;
+    vZ0.push_back(htPar[3]);
+    vTheta.push_back(thetaGen);
     vAlgo.push_back(-1);
     cout << endl << "Track n. " << iTrack << ": generated parameters = ( "
 	 << vDoca.at(iTrack) << ", " << vKappa.at(iTrack) << ", " << vPhi.at(iTrack) << ", "
-	 << vZ0.at(iTrack) << ", " << vLambda.at(iTrack) << ")" << endl;
+	 << vZ0.at(iTrack) << ", " << vTheta.at(iTrack) << ")" << endl;
 
     // Generate hits on track
     double x[nHits];
@@ -163,14 +159,13 @@ int main(int argc, char* argv[])
       double phiC = phiPoca + M_PI*(sameSide + 1)/2 - charge*absKappaGen*st;
       x[iHit] = xC + cos(phiC)/absKappaGen;
       y[iHit] = yC + sin(phiC)/absKappaGen;
-      z[iHit] = z0Gen + st*tan(lambdaGen);
+      z[iHit] = z0Gen + st/tan(thetaGen);
       hitPos[0] = x[iHit];
       hitPos[1] = y[iHit];
       hitPos[2] = z[iHit];
       // Do the Hough transform to get back original parameters
-      getPhiLambda(hitPos, absDocaGen, sameSide*absKappaGen, z0Gen, htPar);
-      cout << "Hit n." << iHit << ": phi = [" << htPar[2][0] << ", " << htPar[2][1] << "]"
-	   << "; lambda = [" << htPar[4][0] << ", " << htPar[4][1] << "]" << endl;
+      getPhiTheta(hitPos, htPar);
+      cout << "Hit n." << iHit << ": phi = " << htPar[2] << "; theta = " << htPar[4] << endl;
     }
     
     // Populate helix graph
@@ -186,21 +181,20 @@ int main(int argc, char* argv[])
       double kappaBinWidth = 2*maxAbsKappa/nBins;
       double z0BinWidth = (maxZ0 - minZ0)/nBins;
       // Loop on allowed histogram bins (first doca, then kappa, then z0) and fill histogram
-      for (double docaScan = -maxAbsDoca + 0.5*docaBinWidth; docaScan < maxAbsDoca; docaScan += docaBinWidth) {
+      for (htPar[0] = -maxAbsDoca + 0.5*docaBinWidth; htPar[0] < maxAbsDoca; htPar[0] += docaBinWidth) {
       // Start from first allowed kappa bin (must be kappaScan >= -2/(r + docaScan))
 	double firstKappa = -maxAbsKappa;
-	if (-2/(r + docaScan) > firstKappa) {
-	  int binPosition = (-2/(r + docaScan))/kappaBinWidth;
+	if (-2/(r + htPar[0]) > firstKappa) {
+	  int binPosition = (-2/(r + htPar[0]))/kappaBinWidth;
 	  firstKappa = (binPosition - 0.5)*kappaBinWidth;
 	}
-	for (double kappaScan = firstKappa; kappaScan < min(maxAbsKappa, 2/(r - docaScan)); kappaScan += kappaBinWidth) {
-	  for (double z0 = minZ0 + z0BinWidth/2; z0 < maxZ0; z0 += z0BinWidth) {
+	for (htPar[1] = firstKappa; htPar[1] < min(maxAbsKappa, 2/(r - htPar[0])); htPar[1] += kappaBinWidth) {
+	  for (htPar[3] = minZ0 + z0BinWidth/2; htPar[3] < maxZ0; htPar[3] += z0BinWidth) {
 	    hitPos[0] = x[iHit];
 	    hitPos[1] = y[iHit];
 	    hitPos[2] = z[iHit];
-	    getPhiLambda(hitPos, docaScan, kappaScan, z0, htPar);
-	    for (int iSol = 0; iSol < 2; iSol++)
-	      hHoughVotes.Fill(htPar[0][iSol], htPar[1][iSol], htPar[2][iSol], htPar[3][iSol], htPar[4][iSol]);
+	    getPhiTheta(hitPos, htPar);
+	    hHoughVotes.Fill(htPar[0], htPar[1], htPar[2], htPar[3], htPar[4]);
 	  }
 	}
       }
