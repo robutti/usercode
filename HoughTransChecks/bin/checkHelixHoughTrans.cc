@@ -23,11 +23,9 @@ void getPhiTheta(double hitPos[], double htPar[])
   double r = sqrt(hitPos[0]*hitPos[0] + hitPos[1]*hitPos[1]);
   double akappa = (htPar[1]*htPar[0]*htPar[0] + htPar[1]*r*r - 2*htPar[0])/(2*r);
   double hkappa = sqrt((1 - htPar[0]*htPar[1])*(1 - htPar[0]*htPar[1]) - akappa*akappa);
-  int signD = htPar[0]/fabs(htPar[0]);
-  double kappaxD = signD*(-akappa*hitPos[0]/r + hkappa*hitPos[1]/r);
-  double kappayD = signD*(-akappa*hitPos[1]/r - hkappa*hitPos[0]/r);
-  double phiD = atan2(kappayD, kappaxD);
-  htPar[2] = phiD + signD*(M_PI/2.);
+  double kappaxD = -akappa*hitPos[0]/r + hkappa*hitPos[1]/r;
+  double kappayD = -akappa*hitPos[1]/r - hkappa*hitPos[0]/r;
+  htPar[2] = atan2(kappayD, kappaxD) + M_PI/2.;
   htPar[2] += -2.*M_PI*(int((htPar[2] + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
   double xc = (htPar[0] - 1./htPar[1])*sin(htPar[2]);
   double yc = -(htPar[0] - 1./htPar[1])*cos(htPar[2]);
