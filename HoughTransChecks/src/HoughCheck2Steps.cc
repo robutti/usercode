@@ -92,7 +92,7 @@ private:
   string builderName_;
   const TransientTrackingRecHitBuilder* builder_;
   const vector<unsigned int> algoSel_;
-  const string  layerListName_;
+  const string layerListName_;
   ctfseeding::SeedingLayerSets layerSets_;
   vector<double> minPar_;
   vector<double> maxPar_;
@@ -101,6 +101,8 @@ private:
   const double etaBinOverlap_;
   const unsigned int xyVoteThr_;
   const unsigned int xyzVoteThr_;
+  const bool cleanupSeeds_;
+  const string outRootFile_;
   const unsigned int verbosity_;
 
   // Histogram and tree 
@@ -142,6 +144,8 @@ HoughCheck2Steps::HoughCheck2Steps(const edm::ParameterSet& iConfig)
   etaBinOverlap_(iConfig.getParameter<double>("etaBinOverlap")),
   xyVoteThr_(iConfig.getParameter<unsigned int>("xyVoteThr")),
   xyzVoteThr_(iConfig.getParameter<unsigned int>("xyzVoteThr")),
+  cleanupSeeds_(iConfig.getUntrackedParameter<bool>("cleanupSeeds", false)),
+  outRootFile_(iConfig.getUntrackedParameter<string>("outRootFile", "houghCheck_2steps.root")),
   verbosity_(iConfig.getUntrackedParameter<unsigned int>("verbosity", 0))
 {
 }
@@ -225,7 +229,7 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
     vTheta_.push_back(perigeePars.theta());
     vAlgo_.push_back(itTrack->algo());
 
-    // Store hits in auxiliary vector
+    // Store track hits in auxiliary vector
     vector<TransientTrackingRecHit::RecHitPointer> vTHits;
     for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
       TransientTrackingRecHit::RecHitPointer hit = builder_->build(&**i );
@@ -242,18 +246,18 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
   if (!(hXYHoughVotes_.get()))
     return;
   // Transverse step.
-  // Loop on layers and hits within
-  //  map<unsigned int, map<unsigned int, vector<pair<GlobalPoint, double> > > > xyVotes;
-  map<unsigned int, map<unsigned int, vector<pair<TransientTrackingRecHit::ConstRecHitPointer, double> > > > xyVotes;
-  int nhit = 0;
+  // Loop on layers and hits within, store in auxiliary vector
+  vector<TransientTrackingRecHit::ConstRecHitPointer> vHits;
+  map<unsigned int, map<unsigned int, vector<pair<int, double> > > > xyVotes;
+  int nHit = -1;
   for (ctfseeding::SeedingLayerSets::const_iterator itLS = layerSets_.begin(); itLS != layerSets_.end(); itLS++ ) {
-//     ctfseeding::SeedingLayer::Hits lyrSetHits;
     for (ctfseeding::SeedingLayers::const_iterator itLyr = itLS->begin(); itLyr!= itLS->end(); itLyr++ ) {
       ctfseeding::SeedingLayer::Hits hits = itLyr->hits(iEvent, iSetup);
-//    lyrSetHits.insert(lyrSetHits.end(), hits.begin(), hits.end());
       for (ctfseeding::SeedingLayer::Hits::const_iterator itHit = hits.begin(); itHit != hits.end(); itHit++) {
+	nHit++;
+	vHits.push_back(*itHit);
 	if (verbosity_ > 2)
-	  cout << "hit #" << nhit++;
+	  cout << "hit #" << nHit;
 	DetId hitId = (*itHit)->geographicalId();
 	if (hitId.det() != DetId::Tracker)
 	  continue;
@@ -301,10 +305,10 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	      int lastPhiBin = min(nBins_[2] - 1, (int)((phi - minPar_[2] + phiOverlap)/phiBinWidth));
 	      for (int iPhi = firstPhiBin; iPhi <= lastPhiBin; iPhi++) {
 		unsigned int keyBin = iDoca | (iSqrtK << 8) | (iPhi << 16);
-		map<unsigned int, vector<pair<TransientTrackingRecHit::ConstRecHitPointer, double> > >& lyrMap = xyVotes[keyBin];
+		map<unsigned int, vector<pair<int, double> > >& lyrMap = xyVotes[keyBin];
 		unsigned int keyLyr = (hitSubDet << 4) | hitLayer;
-		vector<pair<TransientTrackingRecHit::ConstRecHitPointer, double> >& vLyrHits = lyrMap[keyLyr];
-		vLyrHits.push_back(make_pair((*itHit), phi));
+		vector<pair<int, double> >& vLyrHits = lyrMap[keyLyr];
+		vLyrHits.push_back(make_pair(nHit, phi));
 	      }
 	    }
 	  }
@@ -316,9 +320,9 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
   }
 
   // Longitudinal step
-  map<unsigned long, map<unsigned int, vector<TransientTrackingRecHit::ConstRecHitPointer> > > xyzVotes;
+  map<unsigned long, map<unsigned int, vector<int> > > xyzVotes;
   // Fill 5-par map for 3-par bins over threshold
-  for (map<unsigned int, map<unsigned int, vector<pair<TransientTrackingRecHit::ConstRecHitPointer, double> > > >::iterator itBin = xyVotes.begin(); itBin != xyVotes.end(); itBin++) {
+  for (map<unsigned int, map<unsigned int, vector<pair<int, double> > > >::iterator itBin = xyVotes.begin(); itBin != xyVotes.end(); itBin++) {
     unsigned int keyBin = (*itBin).first;
     int docaBin = (keyBin & 255) + 1;
     int sqrtKBin = ((keyBin >> 8) & 255) + 1;
@@ -330,10 +334,10 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
       double doca = minPar_[0] + (docaBin + 0.5)*docaBinWidth;
       double sqrtK = minPar_[1] + (sqrtKBin + 0.5)*sqrtKBinWidth;
       double kappa = sqrtK*fabs(sqrtK);
-      for (map<unsigned int, vector<pair<TransientTrackingRecHit::ConstRecHitPointer, double> > >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
+      for (map<unsigned int, vector<pair<int, double> > >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
 	unsigned int keyLyr = (*itLyr).first;
-	for (vector<pair<TransientTrackingRecHit::ConstRecHitPointer, double> >::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
-	  TransientTrackingRecHit::ConstRecHitPointer hit = (*itHit).first;
+	for (vector<pair<int, double> >::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
+	  TransientTrackingRecHit::ConstRecHitPointer hit = vHits[(*itHit).first];
 	  GlobalPoint hitPosition = hit->globalPosition();
 	  double x = 10.*hitPosition.x();
 	  double y = 10.*hitPosition.y();
@@ -355,97 +359,150 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	    int lastEtaBin = min(nBins_[4] - 1, (int)((eta - minPar_[4] + etaOverlap)/etaBinWidth));
 	    for (int iEta = firstEtaBin; iEta <= lastEtaBin; iEta++) {
 	      unsigned long key5Par = keyBin | (iZ0 << 24) | ((unsigned long)iEta << 32);
-	      map<unsigned int, vector<TransientTrackingRecHit::ConstRecHitPointer> >& lyrMap = xyzVotes[key5Par];
-	      vector<TransientTrackingRecHit::ConstRecHitPointer>& vLyrHits = lyrMap[keyLyr];
-	      vLyrHits.push_back(hit);
+	      map<unsigned int, vector<int> >& lyrMap = xyzVotes[key5Par];
+	      vector<int>& vLyrHits = lyrMap[keyLyr];
+	      vLyrHits.push_back((*itHit).first);
 	    }
 	  }
 	}
       }      
     }
   }
+
+  // Clean-up seeds: remove below threshold and duplicates if requested
+  map<unsigned long, map<unsigned int, vector<int> > > passVotes;
+  if (verbosity_ > 0)
+    cout << "Number of seeds before clean-up = " << xyzVotes.size() << endl;
+  for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = xyzVotes.begin(); itBin != xyzVotes.end(); itBin++) {
+    bool nextBin = false;
+    unsigned int lyrVotes = (*itBin).second.size();
+    if (lyrVotes > xyzVoteThr_) {
+      if (cleanupSeeds_) {
+	// Get bin
+	unsigned long htBin = (*itBin).first;
+	//	cout << "* DEBUG: htBin = 0x" << hex <<htBin << dec << endl;  // debug
+	int docaBin = htBin & 255;
+	int sqrtKBin = (htBin >> 8) & 255;
+	int phiBin = (htBin >> 16) & 255;
+	int z0Bin = (htBin >> 24) & 255;
+	int etaBin = (htBin >> 32) & 255;
+	int deltaBin = 1;  // width of bin range where to look for duplicates
+	for (int iDoca = max(0, docaBin - deltaBin); !nextBin && iDoca < min(nBins_[0], docaBin + deltaBin + 1); iDoca++)
+	  for (int iSqrtK = max(0, sqrtKBin - deltaBin); !nextBin && iSqrtK < min(nBins_[1], sqrtKBin + deltaBin + 1); iSqrtK++)
+	    for (int iPhi = max(0, phiBin - deltaBin); !nextBin && iPhi < min(nBins_[2], phiBin + deltaBin + 1); iPhi++)
+	      for (int iZ0 = max(0, z0Bin - deltaBin); !nextBin && iZ0 < min(nBins_[3], z0Bin + deltaBin + 1); iZ0++)
+		for (int iEta = max(0, etaBin - deltaBin); !nextBin && iEta < min(nBins_[4], etaBin + deltaBin + 1); iEta++) {
+		  unsigned long key = iDoca | (iSqrtK << 8) | (iPhi << 16) | ((unsigned long)iZ0 << 24) | ((unsigned long)iEta << 32);
+		  //		  cout << "  key = 0x" << hex << key << dec << endl;
+		  if (key == htBin || xyzVotes.find(key) == xyzVotes.end())
+		    continue;
+		  bool hitFound = true;
+		  for (map<unsigned int, vector<int> >::iterator itLyr1 = (*itBin).second.begin(); hitFound && itLyr1 != (*itBin).second.end(); itLyr1++) {
+		    for (vector<int>::iterator itHit1 = (*itLyr1).second.begin(); hitFound && itHit1 != (*itLyr1).second.end(); itHit1++) {
+		      hitFound = false;
+		      for (map<unsigned int, vector<int> >::iterator itLyr2 = xyzVotes[key].begin(); !hitFound && itLyr2 != xyzVotes[key].end(); itLyr2++) {
+			if ((*itLyr2).first != (*itLyr1).first)
+			  continue;
+			for (vector<int>::iterator itHit2 = (*itLyr2).second.begin(); itHit2 != (*itLyr2).second.end(); itHit2++) {
+			  if ((*itHit1) == (*itHit2)) {
+			    hitFound = true;
+			    break;
+			  }
+			}
+		      }
+		    }
+		  }
+		  if (hitFound) {  // all hits found in a "nearby" bin
+		    (*itBin).second.clear();  // remove all hits from the bin
+		    nextBin = true;
+		  }
+		}
+      }
+      if (!nextBin)  // no nearby bin containing all hits (or no clean-up)
+	passVotes[(*itBin).first] = (*itBin).second;
+    }
+  }
+  unsigned int nSeeds = passVotes.size();
+  if (verbosity_ > 0)
+    cout << "Number of seeds after clean-up = " << nSeeds << endl;
+
   // Compare content of 5-par bin over thresholds with track hits
   // Vector with tracks found in HT histogram
   vector<bool> trackFound(vHitsTrk.size(), false);
   // Number of HT "seeds" above threshold and "seeds" corresponding to tracks
-  unsigned int nSeeds = 0;
   unsigned int nGoodSeeds = 0;
-  for (map<unsigned long, map<unsigned int, vector<TransientTrackingRecHit::ConstRecHitPointer> > >::iterator itBin = xyzVotes.begin(); itBin != xyzVotes.end(); itBin++) {
-    unsigned int lyrVotes = (*itBin).second.size();
-    if (lyrVotes > xyzVoteThr_) {
-      nSeeds++;
-      vector<map<unsigned int, bool> > lyrFound(vHitsTrk.size());  // vector with layers with association found
-      for (map<unsigned int, vector<TransientTrackingRecHit::ConstRecHitPointer> >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
-	unsigned int lyrId = (*itLyr).first;
-	for (vector<TransientTrackingRecHit::ConstRecHitPointer>::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
-	  DetId hitId = (*itHit)->geographicalId();
-	  GlobalPoint hitPosition = (*itHit)->globalPosition();
-	  for (unsigned int iTrk = 0; iTrk < vHitsTrk.size(); iTrk++){
-	    for (vector<TransientTrackingRecHit::RecHitPointer>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++) {
-	      GlobalPoint trkHitPosition = (*itTrkHit)->globalPosition();
-	      DetId trkHitId = (*itTrkHit)->geographicalId();
-	      if ((hitId.rawId() & (~3)) == (trkHitId.rawId() & ~3)) {
-		double hitPhi = atan2(hitPosition.y(), hitPosition.x());
-		double trkHitPhi = atan2(trkHitPosition.y(), trkHitPosition.x());
-		double hitR = sqrt(hitPosition.x()*hitPosition.x() + hitPosition.y()*hitPosition.y());
-		switch (trkHitId.subdetId()) {
-		case PixelSubdetector::PixelBarrel:
-		  // Insert appropriate condition
+  for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = passVotes.begin(); itBin != passVotes.end(); itBin++) {
+    vector<map<unsigned int, bool> > lyrFound(vHitsTrk.size());  // vector with layers with association found
+    for (map<unsigned int, vector<int> >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
+      unsigned int lyrId = (*itLyr).first;
+      for (vector<int>::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
+	DetId hitId = vHits[(*itHit)]->geographicalId();
+	GlobalPoint hitPosition = vHits[(*itHit)]->globalPosition();
+	for (unsigned int iTrk = 0; iTrk < vHitsTrk.size(); iTrk++){
+	  for (vector<TransientTrackingRecHit::RecHitPointer>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++) {
+	    GlobalPoint trkHitPosition = (*itTrkHit)->globalPosition();
+	    DetId trkHitId = (*itTrkHit)->geographicalId();
+	    if ((hitId.rawId() & (~3)) == (trkHitId.rawId() & ~3)) {
+	      double hitPhi = atan2(hitPosition.y(), hitPosition.x());
+	      double trkHitPhi = atan2(trkHitPosition.y(), trkHitPosition.x());
+	      double hitR = sqrt(hitPosition.x()*hitPosition.x() + hitPosition.y()*hitPosition.y());
+	      switch (trkHitId.subdetId()) {
+	      case PixelSubdetector::PixelBarrel:
+		// Insert appropriate condition
+		continue;
+		break;
+	      case PixelSubdetector::PixelEndcap:
+		// Insert appropriate condition
+		continue;
+		break;
+	      case StripSubdetector::TIB:
+		if (((TIBDetId)hitId).isDoubleSide() && ((TIBDetId)trkHitId).isRPhi()) {
+		  if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
+		    continue;
+		} else
+		  // Add other cases
 		  continue;
+		break;
+	      case StripSubdetector::TID:
+		if (((TIDDetId)hitId).isDoubleSide() && ((TIDDetId)trkHitId).isRPhi()) {
+		  if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
+		    continue;
+		} else
+		  // Add other cases
 		  break;
-		case PixelSubdetector::PixelEndcap:
-		  // Insert appropriate condition
+	      case StripSubdetector::TOB:
+		if (((TOBDetId)hitId).isDoubleSide() && ((TOBDetId)trkHitId).isRPhi()) {
+		  if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
+		    continue;
+		} else
+		  // Add other cases
 		  continue;
-		  break;
-		case StripSubdetector::TIB:
-		  if (((TIBDetId)hitId).isDoubleSide() && ((TIBDetId)trkHitId).isRPhi()) {
-		    if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
-		      continue;
-		  } else
-		    // Add other cases
+		break;
+	      case StripSubdetector::TEC:
+		if (((TECDetId)hitId).isDoubleSide() && ((TECDetId)trkHitId).isRPhi()) {
+		  if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
 		    continue;
-		  break;
-		case StripSubdetector::TID:
-		  if (((TIDDetId)hitId).isDoubleSide() && ((TIDDetId)trkHitId).isRPhi()) {
-		    if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
-		      continue;
-		  } else
-		    // Add other cases
-		  break;
-		case StripSubdetector::TOB:
-		  if (((TOBDetId)hitId).isDoubleSide() && ((TOBDetId)trkHitId).isRPhi()) {
-		    if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
-		      continue;
-		  } else
-		    // Add other cases
-		    continue;
-		  break;
-		case StripSubdetector::TEC:
-		  if (((TECDetId)hitId).isDoubleSide() && ((TECDetId)trkHitId).isRPhi()) {
-		    if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
-		      continue;
-		  } else
-		    // Add other cases
-		    continue;
-		  break;
-		default:
-		  break;
-		}
-		if (lyrFound[iTrk].find(lyrId) == lyrFound[iTrk].end())  // new layer associated
-		  (lyrFound[iTrk])[lyrId] = true;
+		} else
+		  // Add other cases
+		  continue;
+		break;
+	      default:
 		break;
 	      }
+	      if (lyrFound[iTrk].find(lyrId) == lyrFound[iTrk].end())  // new layer associated
+		(lyrFound[iTrk])[lyrId] = true;
+	      break;
 	    }
 	  }
 	}
       }
-      // Loop again on tracks to check whether some has at least three hits associated to HT votes in bin
-      for (unsigned int iTrk = 0; iTrk < vHitsTrk.size(); iTrk++) {
-	if ((lyrFound[iTrk]).size() >= 3) {
-	  trackFound[iTrk] = true;
-	  nGoodSeeds++;
-	  break;
-	}
+    }
+    // Loop again on tracks to check whether some has at least three hits associated to HT votes in bin
+    for (unsigned int iTrk = 0; iTrk < vHitsTrk.size(); iTrk++) {
+      if ((lyrFound[iTrk]).size() >= 3) {
+	trackFound[iTrk] = true;
+	nGoodSeeds++;
+	break;
       }
     }
   }
@@ -505,7 +562,7 @@ HoughCheck2Steps::beginJob()
 void 
 HoughCheck2Steps::endJob() 
 {
-  TFile outRootFile("houghCheck_2steps.root", "RECREATE");
+  TFile outRootFile(outRootFile_.c_str(), "RECREATE");
   hXYHoughVotes_->Write();
   trackTree_->Write();
 }
@@ -568,6 +625,8 @@ HoughCheck2Steps::fillDescriptions(edm::ConfigurationDescriptions& descriptions)
   desc.add<double>("etaBinOverlap", 0.);
   desc.add<unsigned int>("xyVoteThr", 0);
   desc.add<unsigned int>("xyzVoteThr", 0);
+  desc.addUntracked<bool>("cleanupSeeds", false);
+  desc.addUntracked<string>("outRootFile", "houghCheck_2steps.root");
   desc.addUntracked<unsigned int>("verbosity", 0);
   descriptions.addDefault(desc);
 }
