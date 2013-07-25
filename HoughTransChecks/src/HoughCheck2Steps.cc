@@ -188,61 +188,6 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
   double etaBinWidth = (maxPar_[4] - minPar_[4])/nBins_[4];
   double etaOverlap = etaBinOverlap_*etaBinWidth;
   
-  vector<vector<TransientTrackingRecHit::RecHitPointer> > vHitsTrk;
-  for(TrackCollection::const_iterator itTrack = tracks->begin(); itTrack != tracks->end(); ++itTrack) {
-    ntrk++;
-    // Get fitted track parameters in perigee convention
-    edm::ESHandle<MagneticField> theMF;
-    iSetup.get<IdealMagneticFieldRecord>().get(theMF);
-    GlobalPoint refPoint(itTrack->vx(), itTrack->vy(), itTrack->vz());
-    GlobalVector pTrack(itTrack->px(), itTrack->py(), itTrack->pz());
-    FreeTrajectoryState fts(refPoint, pTrack, TrackCharge(itTrack->charge()), theMF.product());
-    TSCPBuilderNoMaterial tscpBuilder;
-    TrajectoryStateClosestToPoint tsAtClosestApproach = tscpBuilder(fts, GlobalPoint(0.,0.,0.));
-    PerigeeTrajectoryParameters perigeePars = tsAtClosestApproach.perigeeParameters();
-
-    if (verbosity_ > 1)
-      cout << "Track #" << ntrk << " with q=" << itTrack->charge() 
-	   << ", Nhits=" << itTrack->recHitsSize()
-	   << ", (vx,vy,vz)=(" << itTrack->vx() << "," << itTrack->vy() << "," << itTrack->vz() << ")"
-           << ", doca=" << perigeePars.transverseImpactParameter()
-           << ", kappa=" << perigeePars.transverseCurvature()
-	   << ", phi=" << perigeePars.phi()
-           << ", z0=" << perigeePars.longitudinalImpactParameter()
-	   << ", theta=" << perigeePars.theta()
-	   << ", algo=" << itTrack->algoName(itTrack->algo()).c_str() << endl;
-    if (algoSel_.size() != 0) {  // empty vector means 'keep all tracks'
-      bool validAlgo = false;
-      for (vector<unsigned int>::const_iterator itAlgo = algoSel_.begin(); itAlgo != algoSel_.end(); itAlgo++) {
-	if (itTrack->algo() == *itAlgo) {
-	  validAlgo = true;
-	  break;
-	}
-      }
-      if (!validAlgo)
-	continue;
-    }
-    vDoca_.push_back(10.*perigeePars.transverseImpactParameter());
-    vKappa_.push_back(perigeePars.transverseCurvature()/10.);
-    vPhi_.push_back(perigeePars.phi());
-    vZ0_.push_back(10.*perigeePars.longitudinalImpactParameter());
-    vTheta_.push_back(perigeePars.theta());
-    vAlgo_.push_back(itTrack->algo());
-
-    // Store track hits in auxiliary vector
-    vector<TransientTrackingRecHit::RecHitPointer> vTHits;
-    for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
-      TransientTrackingRecHit::RecHitPointer hit = builder_->build(&**i );
-      if (hit->isValid()) {
-	DetId hitId = hit->geographicalId();
-	if(hitId.det() != DetId::Tracker)
-	  continue;
-	vTHits.push_back(hit);
-      }
-    }
-    vHitsTrk.push_back(vTHits);
-  }
-
   if (!(hXYHoughVotes_.get()))
     return;
   // Transverse step.
@@ -257,30 +202,48 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	nHit++;
 	vHits.push_back(*itHit);
 	if (verbosity_ > 2)
-	  cout << "hit #" << nHit;
+	  cout << "hit #" << nHit << ":";
 	DetId hitId = (*itHit)->geographicalId();
 	if (hitId.det() != DetId::Tracker)
 	  continue;
 	int hitSubDet = hitId.subdetId();
 	int hitLayer = 0;
-	if (hitSubDet == PixelSubdetector::PixelBarrel) 
+	if (hitSubDet == PixelSubdetector::PixelBarrel) {
+	  if (verbosity_ > 2)
+	    cout << "hitId = " << PXBDetId(hitId);
           hitLayer = PXBDetId(hitId).layer();
-	else if (hitSubDet == PixelSubdetector::PixelEndcap)
+	}
+	else if (hitSubDet == PixelSubdetector::PixelEndcap) {
+	  if (verbosity_ > 2)
+	    cout << "hitId = " << PXFDetId(hitId);
 	  hitLayer = PXFDetId(hitId).disk();
-	else if (hitSubDet == StripSubdetector::TIB)  
+	}
+	else if (hitSubDet == StripSubdetector::TIB) {
+	  if (verbosity_ > 2)
+	    cout << "hitId = " << TIBDetId(hitId);  
 	  hitLayer = TIBDetId(hitId).layer();
-	else if (hitSubDet == StripSubdetector::TID) 
+	}
+	else if (hitSubDet == StripSubdetector::TID) {
+	  if (verbosity_ > 2)
+	    cout << "hitId = " << TIDDetId(hitId);
 	  hitLayer = TIDDetId(hitId).wheel();
-	else if (hitSubDet == StripSubdetector::TOB) 
+	}
+	else if (hitSubDet == StripSubdetector::TOB) {
+	  if (verbosity_ > 2)
+	    cout << "hitId = " << TOBDetId(hitId); 
  	  hitLayer = TOBDetId(hitId).layer();
-	else if (hitSubDet == StripSubdetector::TEC)
+	}
+	else if (hitSubDet == StripSubdetector::TEC) {
+	  if (verbosity_ > 2)
+	    cout << "hitId = " << TECDetId(hitId);
          hitLayer = TECDetId(hitId).wheel();
+	}
 	else 
 	  continue;
  	if ((*itHit)->isValid()) {
 	  GlobalPoint hitPosition = (*itHit)->globalPosition();
 	  if (verbosity_ > 2)
-	    cout << " - globalPos = " << hitPosition << endl;
+	    cout << ", position = " << hitPosition << endl;
 	  double x = 10.*hitPosition.x();
 	  double y = 10.*hitPosition.y();
 	  double r = sqrt(x*x + y*y);
@@ -312,7 +275,7 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	      }
 	    }
 	  }
-	} else 
+	} else
 	  if (verbosity_ > 2)
 	    cout << " - invalid hit" << endl;
       }
@@ -380,7 +343,6 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
       if (cleanupSeeds_) {
 	// Get bin
 	unsigned long htBin = (*itBin).first;
-	//	cout << "* DEBUG: htBin = 0x" << hex <<htBin << dec << endl;  // debug
 	int docaBin = htBin & 255;
 	int sqrtKBin = (htBin >> 8) & 255;
 	int phiBin = (htBin >> 16) & 255;
@@ -393,7 +355,6 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	      for (int iZ0 = max(0, z0Bin - deltaBin); !nextBin && iZ0 < min(nBins_[3], z0Bin + deltaBin + 1); iZ0++)
 		for (int iEta = max(0, etaBin - deltaBin); !nextBin && iEta < min(nBins_[4], etaBin + deltaBin + 1); iEta++) {
 		  unsigned long key = iDoca | (iSqrtK << 8) | (iPhi << 16) | ((unsigned long)iZ0 << 24) | ((unsigned long)iEta << 32);
-		  //		  cout << "  key = 0x" << hex << key << dec << endl;
 		  if (key == htBin || xyzVotes.find(key) == xyzVotes.end())
 		    continue;
 		  bool hitFound = true;
@@ -426,6 +387,135 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
   if (verbosity_ > 0)
     cout << "Number of seeds after clean-up = " << nSeeds << endl;
 
+  // Associate track hits and get parameters
+  vector<vector<int> > vHitsTrk;
+  for(TrackCollection::const_iterator itTrack = tracks->begin(); itTrack != tracks->end(); ++itTrack) {
+    ntrk++;
+    // Get fitted track parameters in perigee convention
+    edm::ESHandle<MagneticField> theMF;
+    iSetup.get<IdealMagneticFieldRecord>().get(theMF);
+    GlobalPoint refPoint(itTrack->vx(), itTrack->vy(), itTrack->vz());
+    GlobalVector pTrack(itTrack->px(), itTrack->py(), itTrack->pz());
+    FreeTrajectoryState fts(refPoint, pTrack, TrackCharge(itTrack->charge()), theMF.product());
+    TSCPBuilderNoMaterial tscpBuilder;
+    TrajectoryStateClosestToPoint tsAtClosestApproach = tscpBuilder(fts, GlobalPoint(0.,0.,0.));
+    PerigeeTrajectoryParameters perigeePars = tsAtClosestApproach.perigeeParameters();
+
+    if (verbosity_ > 1)
+      cout << "Track #" << ntrk << " with q=" << itTrack->charge() 
+	   << ", Nhits=" << itTrack->recHitsSize()
+	   << ", (vx,vy,vz)=(" << itTrack->vx() << "," << itTrack->vy() << "," << itTrack->vz() << ")"
+           << ", doca=" << perigeePars.transverseImpactParameter()
+           << ", kappa=" << perigeePars.transverseCurvature()
+	   << ", phi=" << perigeePars.phi()
+           << ", z0=" << perigeePars.longitudinalImpactParameter()
+	   << ", theta=" << perigeePars.theta()
+	   << ", algo=" << itTrack->algoName(itTrack->algo()).c_str() << endl;
+    if (algoSel_.size() != 0) {  // empty vector means 'keep all tracks'
+      bool validAlgo = false;
+      for (vector<unsigned int>::const_iterator itAlgo = algoSel_.begin(); itAlgo != algoSel_.end(); itAlgo++) {
+	if (itTrack->algo() == *itAlgo) {
+	  validAlgo = true;
+	  break;
+	}
+      }
+      if (!validAlgo)
+	continue;
+    }
+    vDoca_.push_back(10.*perigeePars.transverseImpactParameter());
+    vKappa_.push_back(perigeePars.transverseCurvature()/10.);
+    vPhi_.push_back(perigeePars.phi());
+    vZ0_.push_back(10.*perigeePars.longitudinalImpactParameter());
+    vTheta_.push_back(perigeePars.theta());
+    vAlgo_.push_back(itTrack->algo());
+    vector<int> vTHits;
+    unsigned int nHitsOrig = 0;
+    for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
+      nHitsOrig++;
+      int assHit = -1;
+      double deltaZ = 1000;
+      TransientTrackingRecHit::RecHitPointer trkHit = builder_->build(&**i );
+      if (trkHit->isValid()) {
+	DetId trkHitId = trkHit->geographicalId();
+	if(trkHitId.det() != DetId::Tracker)
+	  continue;
+	GlobalPoint trkHitPosition = trkHit->globalPosition();
+	double trkHitPhi = atan2(trkHitPosition.y(), trkHitPosition.x());
+	for (unsigned int iHit = 0; iHit < vHits.size(); iHit++) {
+	  DetId hitId = (vHits[iHit])->geographicalId();
+	  if ((hitId.rawId() & (~3)) == (trkHitId.rawId() & ~3)) {
+	    GlobalPoint hitPosition = (vHits[iHit])->globalPosition();
+	    double hitPhi = atan2(hitPosition.y(), hitPosition.x());
+	    double hitR = sqrt(hitPosition.x()*hitPosition.x() + hitPosition.y()*hitPosition.y());
+	    switch (trkHitId.subdetId()) {
+	    case PixelSubdetector::PixelBarrel:
+	      if (verbosity_ > 2)
+		cout << "Hit detId = " << (PXBDetId)trkHitId << ", position = " << trkHitPosition << endl;
+	      // Insert appropriate condition
+	      continue;
+	      break;
+	    case PixelSubdetector::PixelEndcap:
+	      if (verbosity_ > 2)
+		cout << "Hit detId = " << (PXFDetId)trkHitId << ", position = " << trkHitPosition << endl;
+	      // Insert appropriate condition
+	      continue;
+	      break;
+	    case StripSubdetector::TIB:
+	      if (verbosity_ > 2)
+		cout << "Hit detId = " << (TIBDetId)trkHitId << ", position = " << trkHitPosition << endl;
+	      if (((TIBDetId)hitId).isDoubleSide() && ((TIBDetId)trkHitId).isRPhi()) {
+		if (hitR*fabs(hitPhi - trkHitPhi) > 0.02 || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
+		  continue;
+	      } else
+		// Add other cases
+		continue;
+	      break;
+	    case StripSubdetector::TID:
+	      if (verbosity_ > 2)
+		cout << "Hit detId = " << (TIDDetId)trkHitId << ", position = " << trkHitPosition << endl;
+	      if (((TIDDetId)hitId).isDoubleSide() && ((TIDDetId)trkHitId).isRPhi()) {
+		if (hitR*fabs(hitPhi - trkHitPhi) > 0.02 || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
+		  continue;
+	      } else
+		// Add other cases
+		continue;
+	      break;
+	    case StripSubdetector::TOB:
+	      if (verbosity_ > 2)
+		cout << "Hit detId = " << (TOBDetId)trkHitId << ", position = " << trkHitPosition << endl;
+	      if (((TOBDetId)hitId).isDoubleSide() && ((TOBDetId)trkHitId).isRPhi()) {
+		if (hitR*fabs(hitPhi - trkHitPhi) > 0.02 || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
+		  continue;
+	      } else
+		// Add other cases
+		continue;
+	      break;
+	    case StripSubdetector::TEC:
+	      if (verbosity_ > 2)
+		cout << "Hit detId = " << (TECDetId)trkHitId << ", position = " << trkHitPosition << endl;
+	      if (((TECDetId)hitId).isDoubleSide() && ((TECDetId)trkHitId).isRPhi()) {
+		if (hitR*fabs(hitPhi - trkHitPhi) > 0.02 || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
+		  continue;
+	      } else
+		// Add other cases
+		continue;
+	      break;
+	    default:
+	      continue;
+	      break;
+	    }
+	    deltaZ = fabs(hitPosition.z() - trkHitPosition.z());
+	    assHit = iHit;
+	  }
+	}
+      }
+      if (assHit >= 0)
+	vTHits.push_back(assHit);
+    }
+    cout << "Number of hits in track: " << nHitsOrig << "; number of associated hits: " << vTHits.size() << endl;
+    vHitsTrk.push_back(vTHits);
+  }
+
   // Compare content of 5-par bin over thresholds with track hits
   // Vector with tracks found in HT histogram
   vector<bool> trackFound(vHitsTrk.size(), false);
@@ -436,59 +526,9 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
     for (map<unsigned int, vector<int> >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
       unsigned int lyrId = (*itLyr).first;
       for (vector<int>::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
-	DetId hitId = vHits[(*itHit)]->geographicalId();
-	GlobalPoint hitPosition = vHits[(*itHit)]->globalPosition();
 	for (unsigned int iTrk = 0; iTrk < vHitsTrk.size(); iTrk++){
-	  for (vector<TransientTrackingRecHit::RecHitPointer>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++) {
-	    GlobalPoint trkHitPosition = (*itTrkHit)->globalPosition();
-	    DetId trkHitId = (*itTrkHit)->geographicalId();
-	    if ((hitId.rawId() & (~3)) == (trkHitId.rawId() & ~3)) {
-	      double hitPhi = atan2(hitPosition.y(), hitPosition.x());
-	      double trkHitPhi = atan2(trkHitPosition.y(), trkHitPosition.x());
-	      double hitR = sqrt(hitPosition.x()*hitPosition.x() + hitPosition.y()*hitPosition.y());
-	      switch (trkHitId.subdetId()) {
-	      case PixelSubdetector::PixelBarrel:
-		// Insert appropriate condition
-		continue;
-		break;
-	      case PixelSubdetector::PixelEndcap:
-		// Insert appropriate condition
-		continue;
-		break;
-	      case StripSubdetector::TIB:
-		if (((TIBDetId)hitId).isDoubleSide() && ((TIBDetId)trkHitId).isRPhi()) {
-		  if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
-		    continue;
-		} else
-		  // Add other cases
-		  continue;
-		break;
-	      case StripSubdetector::TID:
-		if (((TIDDetId)hitId).isDoubleSide() && ((TIDDetId)trkHitId).isRPhi()) {
-		  if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
-		    continue;
-		} else
-		  // Add other cases
-		  break;
-	      case StripSubdetector::TOB:
-		if (((TOBDetId)hitId).isDoubleSide() && ((TOBDetId)trkHitId).isRPhi()) {
-		  if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
-		    continue;
-		} else
-		  // Add other cases
-		  continue;
-		break;
-	      case StripSubdetector::TEC:
-		if (((TECDetId)hitId).isDoubleSide() && ((TECDetId)trkHitId).isRPhi()) {
-		  if (fabs(hitR*(hitPhi - trkHitPhi) > 0.02))
-		    continue;
-		} else
-		  // Add other cases
-		  continue;
-		break;
-	      default:
-		break;
-	      }
+	  for (vector<int>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++) {
+	    if ((*itHit) == (*itTrkHit)) {
 	      if (lyrFound[iTrk].find(lyrId) == lyrFound[iTrk].end())  // new layer associated
 		(lyrFound[iTrk])[lyrId] = true;
 	      break;
