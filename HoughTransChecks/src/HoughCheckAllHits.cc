@@ -187,6 +187,10 @@ HoughCheckAllHits::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
   vTheta_.clear();
   vAlgo_.clear();
 
+  double docaBinWidth = (maxDoca_ - minDoca_)/nBinsDoca_;
+  double sqrtKBinWidth = (maxSqrtK_ - minSqrtK_)/nBinsSqrtK_;
+  double z0BinWidth = (maxZ0_ - minZ0_)/nBinsZ0_;
+  
   for(TrackCollection::const_iterator itTrack = tracks->begin(); itTrack != tracks->end(); ++itTrack) {
 
     // Get fitted track parameters in perigee convention
@@ -268,56 +272,66 @@ HoughCheckAllHits::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
 	  double y = 10.*hitPosition.y();
 	  double z = 10.*hitPosition.z();
 	  double r = sqrt(x*x + y*y);
-	  double phiHit = atan2(y, x);
-	  // Loop on histogram bins
-	  double docaBinWidth = (maxDoca_ - minDoca_)/nBinsDoca_;
-	  double sqrtKBinWidth = (maxSqrtK_ - minSqrtK_)/nBinsSqrtK_;
-	  double z0BinWidth = (maxZ0_ - minZ0_)/nBinsZ0_;
+	  //	  double phiHit = atan2(y, x);
 	  // Loop on allowed histogram bins (first doca, then kappa, then phi) and fill histogram
-	  for (double docaScan = minDocaScan_; docaScan < maxDocaScan_ + 0.5*docaBinWidth; docaScan += docaBinWidth) {
-	    // Start from first allowed sqrtK bin (must be kappaScan >= -2/(r + docaScan))
-	    double firstSqrtK = -maxSqrtKScan_;
-	    if (-2/(r + docaScan) > -firstSqrtK*firstSqrtK) {
-	      int binPosition = -sqrt(2/(r + docaScan))/sqrtKBinWidth;
-	      firstSqrtK = (binPosition - 0.5)*sqrtKBinWidth;
-	    }
-	    for (double sqrtKScan = firstSqrtK; sqrtKScan < min(maxSqrtKScan_ + 0.5*sqrtKBinWidth, sqrt(2/(r - docaScan))); sqrtKScan += sqrtKBinWidth) {
-	      if (sqrtKScan > -minSqrtKScan_ + 0.5*sqrtKBinWidth && sqrtKScan < minSqrtKScan_ - 0.5*sqrtKBinWidth)  // skip irrelevant values for histogram
+// 	  for (double docaScan = minDocaScan_; docaScan < maxDocaScan_ + 0.5*docaBinWidth; docaScan += docaBinWidth) {
+// 	    // Start from first allowed sqrtK bin (must be kappaScan >= -2/(r + docaScan))
+// 	    double firstSqrtK = -maxSqrtKScan_;
+// 	    if (-2/(r + docaScan) > -firstSqrtK*firstSqrtK) {
+// 	      int binPosition = -sqrt(2/(r + docaScan))/sqrtKBinWidth;
+// 	      firstSqrtK = (binPosition - 0.5)*sqrtKBinWidth;
+// 	    }
+// 	    for (double sqrtKScan = firstSqrtK; sqrtKScan < min(maxSqrtKScan_ + 0.5*sqrtKBinWidth, sqrt(2/(r - docaScan))); sqrtKScan += sqrtKBinWidth) {
+// 	      if (sqrtKScan > -minSqrtKScan_ + 0.5*sqrtKBinWidth && sqrtKScan < minSqrtKScan_ - 0.5*sqrtKBinWidth)  // skip irrelevant values for histogram
+// 		continue;
+// 	      double kappaScan = sqrtKScan*fabs(sqrtKScan);
+// 	      double akappa = (2*docaScan + kappaScan*docaScan*docaScan + kappaScan*r*r)/(2*r);
+// 	      double hkappa = sqrt((docaScan*kappaScan + 1)*(docaScan*kappaScan + 1) - akappa*akappa);
+// 	      for (int sign = -1; sign <= 1; sign += 2) {
+// 		double kappax = akappa*x/r - sign*hkappa*y/r;
+// 		double kappay = akappa*y/r + sign*hkappa*x/r;
+// 		// Convert to perigee parameters
+// 		double phiD = atan2(kappay, kappax);
+// 		int rot = -2*(int((phiHit - phiD + 2*M_PI)/M_PI)%2) + 1;  // hit position wrt. poca: +1 = anticlockwise; -1 = clockwise
+// 		double doca = rot*docaScan;
+// 		//	      double kappa = -rot*kappaScan;
+// 		double kappa = -rot*kappaScan;
+// 		if (fabs(kappa) < 1.e-6)
+// 		  kappa = (kappa >= 0) ? 1.e-6 : -1.e-6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
+// 		double phi = phiD + rot*(M_PI/2.);
+// 		phi += -2.*M_PI*(int((phi + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
+	  for (int iDoca = 0; iDoca < nBinsDoca_; iDoca++) {
+	    double doca = minDoca_ + (iDoca + 0.5)*docaBinWidth;
+	    for (int iSqrtK = 0; iSqrtK < nBinsSqrtK_; iSqrtK++) {
+	      double sqrtK = minSqrtK_ + (iSqrtK + 0.5)*sqrtKBinWidth;
+	      double kappa = sqrtK*fabs(sqrtK);
+	      // Check for allowed range -2/(r - doca) <= kappa <= 2/(r + doca)
+	      if (kappa < -2/(r - doca) || kappa > 2/(r + doca))
 		continue;
-	      double kappaScan = sqrtKScan*fabs(sqrtKScan);
-	      double akappa = (2*docaScan + kappaScan*docaScan*docaScan + kappaScan*r*r)/(2*r);
-	      double hkappa = sqrt((docaScan*kappaScan + 1)*(docaScan*kappaScan + 1) - akappa*akappa);
-	      for (int sign = -1; sign <= 1; sign += 2) {
-		double kappax = akappa*x/r - sign*hkappa*y/r;
-		double kappay = akappa*y/r + sign*hkappa*x/r;
-		// Convert to perigee parameters
-		double phiD = atan2(kappay, kappax);
-		int rot = -2*(int((phiHit - phiD + 2*M_PI)/M_PI)%2) + 1;  // hit position wrt. poca: +1 = anticlockwise; -1 = clockwise
-		double doca = rot*docaScan;
-		//	      double kappa = -rot*kappaScan;
-		double kappa = -rot*kappaScan;
-		if (fabs(kappa) < 1.e-6)
-		  kappa = (kappa >= 0) ? 1.e-6 : -1.e-6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
-		double phi = phiD + rot*(M_PI/2.);
-		phi += -2.*M_PI*(int((phi + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
-		double xc = (doca - 1./kappa)*sin(phi);
-		double yc = -(doca - 1./kappa)*cos(phi);
-		for (double z0 = minZ0_ + z0BinWidth/2; z0 < maxZ0_; z0 += z0BinWidth) {
-		  double st = 1./kappa*(atan2(kappa*(y - yc), kappa*(x - xc)) - phi + M_PI/2.);
-		  if (st < 0)  // rotation angle has crossed the +/-PI border
-		    st += 2.*M_PI/fabs(kappa);
-		  else if (st > 2.*M_PI/fabs(kappa))
-		    st -= 2.*M_PI/fabs(kappa);
-		  double lambda = atan((z - z0)/st);
-		  double eta = -log(tan((M_PI/2. - lambda)/2.));
-		  //		hHoughVotes_->Fill(doca, kappa, phi, z0, eta);
-		  int key = hHoughVotes_->FindBin(doca, -rot*sqrtKScan, phi, z0, eta);
-		  if ((layersInBin[key] & (1 << (lyrMapOffset_[hitSubDet] + hitLayer - 1))) == 0) {
-		    if (key == 5070775)
-		      cout << "layersInBin[" << key << "] = " << layersInBin[key] << "; new bin = " << lyrMapOffset_[hitSubDet] + hitLayer - 1 << endl;
-		    layersInBin[key] |= (1 << (lyrMapOffset_[hitSubDet] + hitLayer - 1));
-		    hHoughVotes_->Fill(doca, -rot*sqrtKScan, phi, z0, eta);
-		  }
+	      double akappa = (kappa*doca*doca + kappa*r*r - 2*doca)/(2*r);
+	      double hkappa = sqrt((1 - doca*kappa)*(1 - doca*kappa) - akappa*akappa);
+	      double kappaxD = -akappa*x/r + hkappa*y/r;
+	      double kappayD = -akappa*y/r - hkappa*x/r;
+	      double phi = atan2(kappayD, kappaxD) + M_PI/2.;
+	      phi += -2.*M_PI*(int((phi + 3.*M_PI)/(2.*M_PI)) - 1);  // map to range (-PI, PI)
+	      if (fabs(kappa) < 1.e-6)
+		kappa = (kappa >= 0) ? 1.e-6 : -1.e-6;  // avoid kappa = 0 (maximum curvature radius = 1 km)
+	      double xc = (doca - 1./kappa)*sin(phi);
+	      double yc = -(doca - 1./kappa)*cos(phi);
+	      for (int iZ0 = 0; iZ0 < nBinsZ0_; iZ0++) {
+		double z0 = minZ0_ + (iZ0 + 0.5)*z0BinWidth;
+		double st = 1./kappa*(atan2(kappa*(y - yc), kappa*(x - xc)) - phi + M_PI/2.);
+		if (st < 0)  // rotation angle has crossed the +/-PI border
+		  st += 2.*M_PI/fabs(kappa);
+		else if (st > 2.*M_PI/fabs(kappa))
+		  st -= 2.*M_PI/fabs(kappa);
+		double lambda = atan((z - z0)/st);
+		double eta = -log(tan((M_PI/2. - lambda)/2.));
+		//		hHoughVotes_->Fill(doca, kappa, phi, z0, eta);
+		int key = hHoughVotes_->FindBin(doca, sqrtK, phi, z0, eta);
+		if ((layersInBin[key] & (1 << (lyrMapOffset_[hitSubDet] + hitLayer - 1))) == 0) {
+		  layersInBin[key] |= (1 << (lyrMapOffset_[hitSubDet] + hitLayer - 1));
+		  hHoughVotes_->Fill(doca, sqrtK, phi, z0, eta);
 		}
 	      }
 	    }
@@ -352,37 +366,17 @@ HoughCheckAllHits::beginJob()
     cout << "Invalid nBinsDoca parameter (" << nBinsDoca_ << "). Valid range is 0 < nBinsDoca <= 200. No histogram booked." << endl;
     return;
   }
-  float docaBinWidth = (maxDoca_ - minDoca_)/nBinsDoca_; 
-  if (docaBinWidth <= 0) {
+  if (minDoca_ >= maxDoca_) {
     cout << "Invalid doca range: min(doca) >= max(doca). No histogram booked." << endl;
     return;
-  } else if (minDoca_ < 0 && maxDoca_ > 0) {  // shift the range so that 0 is a bin edge
-    float shift = docaBinWidth*int((maxDoca_ + 0.5*docaBinWidth)/docaBinWidth) - maxDoca_;
-    minDoca_ += shift;
-    maxDoca_ += shift;
-    minDocaScan_ = 0.5*docaBinWidth;
-    maxDocaScan_ = max(fabs(minDoca_), fabs(maxDoca_)) - 0.5*docaBinWidth;
-  } else {
-    minDocaScan_ = min(fabs(minDoca_), fabs(maxDoca_)) + 0.5*docaBinWidth;
-    maxDocaScan_ = max(fabs(minDoca_), fabs(maxDoca_)) - 0.5*docaBinWidth;
   }
   if (nBinsSqrtK_ <= 0 || nBinsSqrtK_ > 200) {
     cout << "Invalid nBinsSqrtK parameter (" << nBinsSqrtK_ << "). Valid range is 0 < nBinsSqrtK <= 200. No histogram booked." << endl;
     return;
   }
-  float sqrtKBinWidth = (maxSqrtK_ - minSqrtK_)/nBinsSqrtK_;
-  if (sqrtKBinWidth <= 0) {
+  if (minSqrtK_ >= maxSqrtK_) {
     cout << "Invalid sqrtK range: min(sqrtK) >= max(sqrtK). No histogram booked." << endl;
     return;
-  } else if (minSqrtK_ < 0 && maxSqrtK_ > 0) {  // shift the range so that 0 is a bin edge
-    float shift = sqrtKBinWidth*int((maxSqrtK_ + 0.5*sqrtKBinWidth)/sqrtKBinWidth) - maxSqrtK_;
-    minSqrtK_ += shift;
-    maxSqrtK_ += shift;
-    minSqrtKScan_ = 0.5*sqrtKBinWidth;
-    maxSqrtKScan_ = max(fabs(minSqrtK_), fabs(maxSqrtK_)) - 0.5*sqrtKBinWidth;
-  } else {
-    minSqrtKScan_ = min(fabs(minSqrtK_), fabs(maxSqrtK_)) + 0.5*sqrtKBinWidth;
-    maxSqrtKScan_ = max(fabs(minSqrtK_), fabs(maxSqrtK_)) - 0.5*sqrtKBinWidth;
   }
   if (nBinsPhi_ <= 0 || nBinsPhi_ > 200) {
     cout << "Invalid nBinsPhi parameter (" << nBinsPhi_ << "). Valid range is 0 < nBinsPhi <= 200. No histogram booked." << endl;
