@@ -133,6 +133,9 @@ private:
   vector<vector<double> > vPhiExp_;
   vector<vector<double> > vZ0Exp_;
   vector<vector<double> > vThetaExp_;
+  vector<vector<double> > vXHit_;
+  vector<vector<double> > vYHit_;
+  vector<vector<double> > vZHit_;
 };
 
 //
@@ -267,6 +270,9 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
     vector<double> vPhiHit;
     vector<double> vZ0Hit;
     vector<double> vThetaHit;
+    vector<double> vX;
+    vector<double> vY;
+    vector<double> vZ;
     for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
       if (verbosity_ > 2)
  	cout << "hit #" << nhit++;
@@ -324,8 +330,11 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
 	if (verbosity_ > 2)
 	  cout << " - globalPos = " << hitPosition << endl;
 	double x = 10.*hitPosition.x();
+	vX.push_back(x);
 	double y = 10.*hitPosition.y();
+	vY.push_back(y);
 	double z = 10.*hitPosition.z();
+	vZ.push_back(z);
 	double r = sqrt(x*x + y*y);
 	double phiHit = atan2(y, x);
 	// Get expected parameters based on fitted remaining ones
@@ -438,6 +447,9 @@ HoughCheckOnTracks::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
     vPhiExp_.push_back(vPhiHit);
     vZ0Exp_.push_back(vZ0Hit);
     vThetaExp_.push_back(vThetaHit);
+    vXHit_.push_back(vX);
+    vYHit_.push_back(vY);
+    vZHit_.push_back(vZ);
     if (verbosity_ > 2)
       cout << endl;
     ntrk++;
@@ -463,6 +475,9 @@ HoughCheckOnTracks::beginJob()
   trackTree_->Branch("phiExp", &vPhiExp_);
   trackTree_->Branch("z0Exp", &vZ0Exp_);
   trackTree_->Branch("thetaExp", &vThetaExp_);
+  trackTree_->Branch("xHit", &vXHit_);
+  trackTree_->Branch("yHit", &vYHit_);
+  trackTree_->Branch("zHit", &vZHit_);
   trackTree_->SetDirectory(0);
 
   // Set edges for histogram axes and scan ranges
