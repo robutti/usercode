@@ -114,6 +114,15 @@ private:
   vector<double> vZ0_;
   vector<double> vTheta_;
   vector<double> vAlgo_;
+  unsigned int nSeeds_;
+  unsigned int nGoodSeeds_;
+  unsigned int nTriedSeeds_;
+  unsigned int nAssSeeds_;
+  unsigned int nTracks_;
+  unsigned int nTracksAlgo_;
+  unsigned int nAccTracks_;
+  unsigned int nAssTracks_;
+  unsigned int nFoundTracks_;
 
   // Layer mapping
   static const int lyrMapOffset_[7];
@@ -170,16 +179,6 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 {
   using reco::TrackCollection;
    
-  Handle<TrackCollection> tracks;
-  iEvent.getByLabel(trackTags_,tracks);
-  int ntrk = -1;
-  vDoca_.clear();
-  vKappa_.clear();
-  vPhi_.clear();
-  vZ0_.clear();
-  vTheta_.clear();
-  vAlgo_.clear();
-
   double docaBinWidth = (maxPar_[0] - minPar_[0])/nBins_[0];
   double sqrtKBinWidth = (maxPar_[1] - minPar_[1])/nBins_[1];
   double phiBinWidth = (maxPar_[2] - minPar_[2])/nBins_[2];
@@ -331,11 +330,10 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
       }      
     }
   }
+  nSeeds_ = xyzVotes.size();
 
   // Clean-up seeds: remove below threshold and duplicates if requested
   map<unsigned long, map<unsigned int, vector<int> > > passVotes;
-  if (verbosity_ > 0)
-    cout << "Number of seeds before clean-up = " << xyzVotes.size() << endl;
   for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = xyzVotes.begin(); itBin != xyzVotes.end(); itBin++) {
     bool nextBin = false;
     unsigned int lyrVotes = (*itBin).second.size();
@@ -383,14 +381,23 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	passVotes[(*itBin).first] = (*itBin).second;
     }
   }
-  unsigned int nSeeds = passVotes.size();
-  if (verbosity_ > 0)
-    cout << "Number of seeds after clean-up = " << nSeeds << endl;
+  nGoodSeeds_ = passVotes.size();
 
   // Associate track hits and get parameters
+  Handle<TrackCollection> tracks;
+  iEvent.getByLabel(trackTags_,tracks);
+  nTracks_ = 0;
+  nTracksAlgo_ = 0;
+  nAccTracks_ = 0;
+  vDoca_.clear();
+  vKappa_.clear();
+  vPhi_.clear();
+  vZ0_.clear();
+  vTheta_.clear();
+  vAlgo_.clear();
   vector<vector<int> > vHitsTrk;
   for(TrackCollection::const_iterator itTrack = tracks->begin(); itTrack != tracks->end(); ++itTrack) {
-    ntrk++;
+    nTracks_++;
     // Get fitted track parameters in perigee convention
     edm::ESHandle<MagneticField> theMF;
     iSetup.get<IdealMagneticFieldRecord>().get(theMF);
@@ -402,7 +409,7 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
     PerigeeTrajectoryParameters perigeePars = tsAtClosestApproach.perigeeParameters();
 
     if (verbosity_ > 1)
-      cout << "Track #" << ntrk << " with q=" << itTrack->charge() 
+      cout << "Track #" << nTracks_ - 1 << " with q=" << itTrack->charge() 
 	   << ", Nhits=" << itTrack->recHitsSize()
 	   << ", (vx,vy,vz)=(" << itTrack->vx() << "," << itTrack->vy() << "," << itTrack->vz() << ")"
            << ", doca=" << perigeePars.transverseImpactParameter()
@@ -422,12 +429,21 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
       if (!validAlgo)
 	continue;
     }
+    nTracksAlgo_++;
     vDoca_.push_back(10.*perigeePars.transverseImpactParameter());
     vKappa_.push_back(perigeePars.transverseCurvature()/10.);
     vPhi_.push_back(perigeePars.phi());
     vZ0_.push_back(10.*perigeePars.longitudinalImpactParameter());
     vTheta_.push_back(perigeePars.theta());
     vAlgo_.push_back(itTrack->algo());
+    // Check if track is in histogram acceptance
+    if (vDoca_.back() < minPar_[0] || vDoca_.back() > maxPar_[0] ||
+        vKappa_.back()/sqrt(fabs(vKappa_.back())) < minPar_[1] || vKappa_.back()/sqrt(fabs(vKappa_.back())) > maxPar_[1] ||
+        vPhi_.back() < minPar_[2] || vPhi_.back() > maxPar_[2] ||
+        vZ0_.back() < minPar_[3] || vZ0_.back() > maxPar_[3] ||
+        -log(tan(0.5*vTheta_.back())) < minPar_[4] || -log(tan(0.5*vTheta_.back())) > maxPar_[4])
+      continue;
+    nAccTracks_++;      
     vector<int> vTHits;
     unsigned int nHitsOrig = 0;
     for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
@@ -512,51 +528,71 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
       if (assHit >= 0)
 	vTHits.push_back(assHit);
     }
-    cout << "Number of hits in track: " << nHitsOrig << "; number of associated hits: " << vTHits.size() << endl;
-    vHitsTrk.push_back(vTHits);
+    if (verbosity_ > 2)
+      cout << "Number of hits in track: " << nHitsOrig << "; number of associated hits: " << vTHits.size() << endl;
+    if (vTHits.size() >= 3)
+      vHitsTrk.push_back(vTHits);
   }
+  nAssTracks_ = vHitsTrk.size();
 
   // Compare content of 5-par bin over thresholds with track hits
-  // Vector with tracks found in HT histogram
-  vector<bool> trackFound(vHitsTrk.size(), false);
-  // Number of HT "seeds" above threshold and "seeds" corresponding to tracks
-  unsigned int nGoodSeeds = 0;
+  map<int, bool> assHits;  // map with hits in found tracks
+  vector<bool> trackFound(nAssTracks_, false);  // vector with tracks found in HT histogram
+  // Number of HT "seeds" surviving after using hits and "seeds" corresponding to tracks
+  nTriedSeeds_ = 0;
+  nAssSeeds_ = 0;
   for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = passVotes.begin(); itBin != passVotes.end(); itBin++) {
-    vector<map<unsigned int, bool> > lyrFound(vHitsTrk.size());  // vector with layers with association found
+    map<unsigned int, bool> lyrTried;  // map with layers tried
+    vector<map<unsigned int, bool> > lyrFound(nAssTracks_);  // vector with layers with association found
     for (map<unsigned int, vector<int> >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
       unsigned int lyrId = (*itLyr).first;
       for (vector<int>::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
-	for (unsigned int iTrk = 0; iTrk < vHitsTrk.size(); iTrk++){
-	  for (vector<int>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++) {
-	    if ((*itHit) == (*itTrkHit)) {
-	      if (lyrFound[iTrk].find(lyrId) == lyrFound[iTrk].end())  // new layer associated
-		(lyrFound[iTrk])[lyrId] = true;
-	      break;
+	if (assHits.find(*itHit) == assHits.end()) {
+	  if (lyrTried.find(lyrId) == lyrTried.end())  // new layer tried
+	    lyrTried[lyrId] = true;
+	  for (unsigned int iTrk = 0; iTrk < nAssTracks_; iTrk++){
+	    for (vector<int>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++) {
+	      if ((*itHit) == (*itTrkHit)) {
+		if (lyrFound[iTrk].find(lyrId) == lyrFound[iTrk].end())  // new layer associated
+		  (lyrFound[iTrk])[lyrId] = true;
+		break;
+	      }
 	    }
 	  }
 	}
       }
     }
-    // Loop again on tracks to check whether some has at least three hits associated to HT votes in bin
-    for (unsigned int iTrk = 0; iTrk < vHitsTrk.size(); iTrk++) {
-      if ((lyrFound[iTrk]).size() >= 3) {
-	trackFound[iTrk] = true;
-	nGoodSeeds++;
-	break;
+    if (lyrTried.size() >= 3) {
+      nTriedSeeds_++;
+      // Loop again on tracks to check whether some has at least three hits associated to HT votes in bin
+      for (unsigned int iTrk = 0; iTrk < nAssTracks_; iTrk++) {
+	if ((lyrFound[iTrk]).size() >= 3) {
+	  trackFound[iTrk] = true;
+	  nAssSeeds_++;
+	  // Flag as associated all track hits
+	  for (vector<int>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++)
+	    assHits[*itTrkHit] = true;
+	  break;
+	}
       }
     }
   }
 
   // Final loop on tracks to count how many were "found" by HT
-  unsigned int nFoundTracks = 0;
-  for (unsigned int iTrk = 0; iTrk < vHitsTrk.size(); iTrk++)
+  nFoundTracks_ = 0;
+  for (unsigned int iTrk = 0; iTrk < nAssTracks_; iTrk++)
     if (trackFound[iTrk])
-      nFoundTracks++;
+      nFoundTracks_++;
   // Print results
-  cout << "Total number of seeds: " << nSeeds << endl;
-  cout << "Seeds associated to tracks: " << nGoodSeeds << endl;
-  cout << "Total number of tracks: " << trackFound.size() << endl;
-  cout << "Tracks associated to seeds: " << nFoundTracks << endl;
+  cout << "Total number of seeds: " << nSeeds_ << endl;
+  cout << "Seeds after clean-up: " << nGoodSeeds_ << endl;
+  cout << "Seeds surviving after removing used hits: " << nTriedSeeds_ << endl;
+  cout << "Seeds associated to tracks: " << nAssSeeds_ << endl;
+  cout << "Total number of tracks in event: " << nTracks_ << endl;
+  cout << "Tracks found by selected iterations: " << nTracksAlgo_ << endl;
+  cout << "Tracks in parameter acceptance: " << nAccTracks_ << endl;
+  cout << "Tracks with at least 3 associated hits: " << nAssTracks_ << endl;
+  cout << "Tracks associated to seeds: " << nFoundTracks_ << endl;
 
   // Fill track tree
   trackTree_->Fill();
@@ -575,6 +611,16 @@ HoughCheck2Steps::beginJob()
   trackTree_->Branch("z0", &vZ0_);
   trackTree_->Branch("theta", &vTheta_);
   trackTree_->Branch("algo", &vAlgo_);
+  trackTree_->Branch("nSeeds", &nSeeds_);
+  trackTree_->Branch("nGoodSeeds", &nGoodSeeds_);
+  trackTree_->Branch("nTriedSeeds", &nTriedSeeds_);
+  trackTree_->Branch("nAssSeeds", &nAssSeeds_);
+  trackTree_->Branch("nTracks", &nTracks_);
+  trackTree_->Branch("nTracksAlgo", &nTracksAlgo_);
+  trackTree_->Branch("nAccTracks", &nAccTracks_);
+  trackTree_->Branch("nAssTracks", &nAssTracks_);
+  trackTree_->Branch("nFoundTracks", &nFoundTracks_);
+
   trackTree_->SetDirectory(0);
 
   // Check parameter ranges and binnings
