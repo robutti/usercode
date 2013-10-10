@@ -9,7 +9,8 @@ process.maxEvents = cms.untracked.PSet( input = cms.untracked.int32(1) )
 
 ### conditions
 process.load("Configuration.StandardSequences.FrontierConditions_GlobalTag_cff")
-process.GlobalTag.globaltag = 'START61_V8::All'
+from Configuration.AlCa.GlobalTag import GlobalTag
+process.GlobalTag = GlobalTag(process.GlobalTag, 'auto:startup', '')
 
 ### standard includes
 process.load('Configuration.StandardSequences.Services_cff')
@@ -37,9 +38,7 @@ process.tracking = cms.Sequence(
 
 process.source = cms.Source("PoolSource",
     fileNames = cms.untracked.vstring(
-#        '/store/relval/CMSSW_6_1_0-START61_V8/RelValSingleMuPt10/GEN-SIM-RECO/v1/00000/D2D2E77F-F94C-E211-86F6-003048FFD71A.root'
-#        '/store/relval/CMSSW_6_1_0-START61_V8/RelValSingleMuPt1/GEN-SIM-RECO/v1/00000/E82A4907-664D-E211-9671-003048678F8A.root'
-        '/store/relval/CMSSW_6_1_0-PU_START61_V8/RelValTTbar/GEN-SIM-RECO/v1/00000/48D7BE40-DC4D-E211-A2E6-003048D373AE.root'
+        '/store/relval/CMSSW_6_2_0/RelValTTbar/GEN-SIM-RECO/PU_PRE_ST62_V8-v2/00000/06277119-A9EC-E211-B39F-003048F1BFE0.root'
         )
 #    skipEvents = cms.untracked.uint32(1)
     )
@@ -48,18 +47,18 @@ process.houghcheck = cms.EDAnalyzer('HoughCheck2Steps',
 #                                    tracks = cms.InputTag('generalTracks'),
                                     tracks = cms.InputTag('TrackRefitter'),
                                     TTRHBuilder = cms.string('WithAngleAndTemplate'),
-                                    algoSel = cms.vuint32(9, 10, 11, 12, 13, 14),
+#                                    algoSel = cms.vuint32(9, 10, 11, 12, 13, 14),
                                     seedingLayers  =  cms.string('HoughTransformSeedLayersAllHitsOneSet'),
                                     minPar = cms.untracked.vdouble(-80., -0.075, -3.14159, -450., -2.5),
                                     maxPar = cms.untracked.vdouble(80., 0.075, 3.14159, 450., 2.5),
-                                    nBins = cms.untracked.vint32(4, 50, 200, 6, 50),
+                                    nBins = cms.untracked.vint32(2, 2, 2, 2, 2),
                                     phiBinOverlap = cms.double(0.25),
                                     etaBinOverlap = cms.double(0.25),
                                     xyVoteThr = cms.uint32(2),
                                     xyzVoteThr = cms.uint32(2),
                                     cleanupSeeds = cms.untracked.bool(False),
-                                    outRootFile = cms.untracked.string(houghCheck_2steps.root),
-                                    verbosity = cms.untracked.uint32(1)
+                                    outRootFile = cms.untracked.string('houghCheck_2steps.root'),
+                                    verbosity = cms.untracked.uint32(3)
 )
 
 process.p = cms.Path(process.TrackRefitter*process.htSeedLayers*process.houghcheck)
