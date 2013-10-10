@@ -292,7 +292,7 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
     unsigned int lyrVotes = (*itBin).second.size();
     // Fill x-y histogram with number of voting layers
     hXYHoughVotes_->SetBinContent(docaBin, sqrtKBin, phiBin, lyrVotes);
-    if (lyrVotes > xyVoteThr_) {
+    if (lyrVotes >= xyVoteThr_) {
       double doca = minPar_[0] + (docaBin + 0.5)*docaBinWidth;
       double sqrtK = minPar_[1] + (sqrtKBin + 0.5)*sqrtKBinWidth;
       double kappa = sqrtK*fabs(sqrtK);
@@ -337,7 +337,7 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
   for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = xyzVotes.begin(); itBin != xyzVotes.end(); itBin++) {
     bool nextBin = false;
     unsigned int lyrVotes = (*itBin).second.size();
-    if (lyrVotes > xyzVoteThr_) {
+    if (lyrVotes >= xyzVoteThr_) {
       if (cleanupSeeds_) {
 	// Get bin
 	unsigned long htBin = (*itBin).first;
@@ -449,6 +449,9 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
     for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++){
       nHitsOrig++;
       int assHit = -1;
+      double maxPixelDxy = 0.01;
+      double maxPixelDz = 0.01;
+      double maxStripDrphi = 0.02;
       double deltaZ = 1000;
       TransientTrackingRecHit::RecHitPointer trkHit = builder_->build(&**i );
       if (trkHit->isValid()) {
@@ -456,6 +459,29 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	if(trkHitId.det() != DetId::Tracker)
 	  continue;
 	GlobalPoint trkHitPosition = trkHit->globalPosition();
+        if (verbosity_ > 2)
+          switch (trkHitId.subdetId()) {
+          case PixelSubdetector::PixelBarrel:
+            cout << "Hit detId = " << (PXBDetId)trkHitId << ", position = " << trkHitPosition;
+            break;
+          case PixelSubdetector::PixelEndcap:
+            cout << "Hit detId = " << (PXFDetId)trkHitId << ", position = " << trkHitPosition;
+            break;
+          case StripSubdetector::TIB:
+            cout << "Hit detId = " << (TIBDetId)trkHitId << ", position = " << trkHitPosition;
+            break;
+          case StripSubdetector::TID:
+            cout << "Hit detId = " << (TIDDetId)trkHitId << ", position = " << trkHitPosition;
+            break;
+          case StripSubdetector::TOB:
+            cout << "Hit detId = " << (TOBDetId)trkHitId << ", position = " << trkHitPosition;
+            break;
+          case StripSubdetector::TEC:
+            cout << "Hit detId = " << (TECDetId)trkHitId << ", position = " << trkHitPosition;
+            break;
+          default:
+            break;
+          }
 	double trkHitPhi = atan2(trkHitPosition.y(), trkHitPosition.x());
 	for (unsigned int iHit = 0; iHit < vHits.size(); iHit++) {
 	  DetId hitId = (vHits[iHit])->geographicalId();
@@ -465,55 +491,43 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	    double hitR = sqrt(hitPosition.x()*hitPosition.x() + hitPosition.y()*hitPosition.y());
 	    switch (trkHitId.subdetId()) {
 	    case PixelSubdetector::PixelBarrel:
-	      if (verbosity_ > 2)
-		cout << "Hit detId = " << (PXBDetId)trkHitId << ", position = " << trkHitPosition << endl;
-	      // Insert appropriate condition
-	      continue;
+              if (fabs(hitPosition.x() - trkHitPosition.x()) > maxPixelDxy ||
+                  fabs(hitPosition.y() - trkHitPosition.y()) > maxPixelDxy ||
+                  fabs(hitPosition.z() - trkHitPosition.z()) > maxPixelDz)
+                continue;
 	      break;
 	    case PixelSubdetector::PixelEndcap:
-	      if (verbosity_ > 2)
-		cout << "Hit detId = " << (PXFDetId)trkHitId << ", position = " << trkHitPosition << endl;
-	      // Insert appropriate condition
-	      continue;
+              if (fabs(hitPosition.x() - trkHitPosition.x()) > maxPixelDxy ||
+                  fabs(hitPosition.y() - trkHitPosition.y()) > maxPixelDxy ||
+                  fabs(hitPosition.z() - trkHitPosition.z()) > maxPixelDz)
+                continue;
 	      break;
 	    case StripSubdetector::TIB:
-	      if (verbosity_ > 2)
-		cout << "Hit detId = " << (TIBDetId)trkHitId << ", position = " << trkHitPosition << endl;
-	      if (((TIBDetId)hitId).isDoubleSide() && ((TIBDetId)trkHitId).isRPhi()) {
-		if (hitR*fabs(hitPhi - trkHitPhi) > 0.02 || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
+	      if (((TIBDetId)hitId).isDoubleSide()) {
+		if (!(((TIBDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
 		  continue;
-	      } else
-		// Add other cases
-		continue;
+	      } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
+                continue;
 	      break;
 	    case StripSubdetector::TID:
-	      if (verbosity_ > 2)
-		cout << "Hit detId = " << (TIDDetId)trkHitId << ", position = " << trkHitPosition << endl;
-	      if (((TIDDetId)hitId).isDoubleSide() && ((TIDDetId)trkHitId).isRPhi()) {
-		if (hitR*fabs(hitPhi - trkHitPhi) > 0.02 || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
+	      if (((TIDDetId)hitId).isDoubleSide()) {
+		if (!(((TIDDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
 		  continue;
-	      } else
-		// Add other cases
+	      } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
 		continue;
 	      break;
 	    case StripSubdetector::TOB:
-	      if (verbosity_ > 2)
-		cout << "Hit detId = " << (TOBDetId)trkHitId << ", position = " << trkHitPosition << endl;
-	      if (((TOBDetId)hitId).isDoubleSide() && ((TOBDetId)trkHitId).isRPhi()) {
-		if (hitR*fabs(hitPhi - trkHitPhi) > 0.02 || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
+	      if (((TOBDetId)hitId).isDoubleSide()) {
+		if (!(((TOBDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
 		  continue;
-	      } else
-		// Add other cases
+	      } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
 		continue;
 	      break;
 	    case StripSubdetector::TEC:
-	      if (verbosity_ > 2)
-		cout << "Hit detId = " << (TECDetId)trkHitId << ", position = " << trkHitPosition << endl;
-	      if (((TECDetId)hitId).isDoubleSide() && ((TECDetId)trkHitId).isRPhi()) {
-		if (hitR*fabs(hitPhi - trkHitPhi) > 0.02 || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
+	      if (((TECDetId)hitId).isDoubleSide()) {
+		if (!(((TECDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
 		  continue;
-	      } else
-		// Add other cases
+	      } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
 		continue;
 	      break;
 	    default:
@@ -522,11 +536,18 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	    }
 	    deltaZ = fabs(hitPosition.z() - trkHitPosition.z());
 	    assHit = iHit;
+            if (deltaZ < 4.)
+              break;
 	  }
 	}
+        if (assHit >= 0) {
+          vTHits.push_back(assHit);
+          if (verbosity_ > 2)
+            cout << ": associated to hit " << assHit;
+        }
+        if (verbosity_ > 2)
+          cout << endl;
       }
-      if (assHit >= 0)
-	vTHits.push_back(assHit);
     }
     if (verbosity_ > 2)
       cout << "Number of hits in track: " << nHitsOrig << "; number of associated hits: " << vTHits.size() << endl;
@@ -562,7 +583,7 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	}
       }
     }
-    if (lyrTried.size() >= 3) {
+    if (lyrTried.size() >= xyzVoteThr_) {
       nTriedSeeds_++;
       // Loop again on tracks to check whether some has at least three hits associated to HT votes in bin
       for (unsigned int iTrk = 0; iTrk < nAssTracks_; iTrk++) {
@@ -663,15 +684,17 @@ HoughCheck2Steps::beginRun(edm::Run const& run, edm::EventSetup const& setup)
   builder_=theBuilder.product();
 
   // Seeding layers
-  cout << "SeedingLayerSetsBuilder name: " << layerListName_ << endl;
-  ESHandle<SeedingLayerSetsBuilder> layerBuilder;
-  setup.get<TrackerDigiGeometryRecord>().get(layerListName_.c_str(), layerBuilder);
-  layerSets_ = layerBuilder->layers(setup); 
-  int i = 0;
-  for (ctfseeding::SeedingLayerSets::const_iterator itLS = layerSets_.begin(); itLS != layerSets_.end(); itLS++) {
-    cout << "SeedingLayerSet number " << ++i << endl;
-    for (ctfseeding::SeedingLayers::const_iterator itLyr = itLS->begin(); itLyr != itLS->end(); itLyr++) {
-      std::cout << "  " << itLyr->name() << std::endl; 
+  if (!layerListName_.empty()) {
+    cout << "SeedingLayerSetsBuilder name: " << layerListName_ << endl;
+    ESHandle<SeedingLayerSetsBuilder> layerBuilder;
+    setup.get<TrackerDigiGeometryRecord>().get(layerListName_.c_str(), layerBuilder);
+    layerSets_ = layerBuilder->layers(setup); 
+    int i = 0;
+    for (ctfseeding::SeedingLayerSets::const_iterator itLS = layerSets_.begin(); itLS != layerSets_.end(); itLS++) {
+      cout << "SeedingLayerSet number " << ++i << endl;
+      for (ctfseeding::SeedingLayers::const_iterator itLyr = itLS->begin(); itLyr != itLS->end(); itLyr++) {
+        std::cout << "  " << itLyr->name() << std::endl; 
+      }
     }
   }
 }
