@@ -58,11 +58,12 @@
 #include "RecoTracker/TkSeedingLayers/interface/SeedingLayerSetsBuilder.h"
 
 #include "TH3S.h"
-#include "TH2S.h"
+#include "TH1I.h"
 #include "TFile.h"
 #include "TTree.h"
 #include "TString.h"
 
+#include "ERobutti/HoughTransChecks/interface/LayerSequence.h"
 
 //
 // class declaration
@@ -107,6 +108,8 @@ private:
 
   // Histogram and tree 
   auto_ptr<TH3S> hXYHoughVotes_;
+  auto_ptr<TH1I> hNVotes_;
+  auto_ptr<TH1I> hNVotesMatched_;
   auto_ptr<TTree> trackTree_;
   vector<double> vDoca_;
   vector<double> vKappa_;
@@ -124,14 +127,13 @@ private:
   unsigned int nAssTracks_;
   unsigned int nFoundTracks_;
 
-  // Layer mapping
-  static const int lyrMapOffset_[7];
+  // Allowed Layer sequences
+  LayerSequence layerSeq_;
 };
 
 //
 // constants, enums and typedefs
 //
-const int HoughCheck2Steps::lyrMapOffset_[7] = {0, 0, 3, 5, 9, 12, 18};
 
 //
 // static data member definitions
@@ -155,7 +157,8 @@ HoughCheck2Steps::HoughCheck2Steps(const edm::ParameterSet& iConfig)
   xyzVoteThr_(iConfig.getParameter<unsigned int>("xyzVoteThr")),
   cleanupSeeds_(iConfig.getUntrackedParameter<bool>("cleanupSeeds", false)),
   outRootFile_(iConfig.getUntrackedParameter<string>("outRootFile", "houghCheck_2steps.root")),
-  verbosity_(iConfig.getUntrackedParameter<unsigned int>("verbosity", 0))
+  verbosity_(iConfig.getUntrackedParameter<unsigned int>("verbosity", 0)),
+  layerSeq_(iConfig.getParameter<unsigned int>("xyzVoteThr"))
 {
 }
 
@@ -292,7 +295,7 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
     unsigned int lyrVotes = (*itBin).second.size();
     // Fill x-y histogram with number of voting layers
     hXYHoughVotes_->SetBinContent(docaBin, sqrtKBin, phiBin, lyrVotes);
-    if (lyrVotes >= xyVoteThr_) {
+    if (layerSeq_.testPattern((*itBin).second)) {
       double doca = minPar_[0] + (docaBin + 0.5)*docaBinWidth;
       double sqrtK = minPar_[1] + (sqrtKBin + 0.5)*sqrtKBinWidth;
       double kappa = sqrtK*fabs(sqrtK);
@@ -336,8 +339,7 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
   map<unsigned long, map<unsigned int, vector<int> > > passVotes;
   for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = xyzVotes.begin(); itBin != xyzVotes.end(); itBin++) {
     bool nextBin = false;
-    unsigned int lyrVotes = (*itBin).second.size();
-    if (lyrVotes >= xyzVoteThr_) {
+    if (layerSeq_.testPattern((*itBin).second)) {
       if (cleanupSeeds_) {
 	// Get bin
 	unsigned long htBin = (*itBin).first;
@@ -565,7 +567,9 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
   for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = passVotes.begin(); itBin != passVotes.end(); itBin++) {
     map<unsigned int, bool> lyrTried;  // map with layers tried
     vector<map<unsigned int, bool> > lyrFound(nAssTracks_);  // vector with layers with association found
+    unsigned int nVotes = 0;
     for (map<unsigned int, vector<int> >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
+      nVotes += (*itLyr).second.size();
       unsigned int lyrId = (*itLyr).first;
       for (vector<int>::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
 	if (assHits.find(*itHit) == assHits.end()) {
@@ -583,17 +587,22 @@ HoughCheck2Steps::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetu
 	}
       }
     }
+    hNVotes_->Fill(nVotes);
     if (lyrTried.size() >= xyzVoteThr_) {
       nTriedSeeds_++;
       // Loop again on tracks to check whether some has at least three hits associated to HT votes in bin
+      bool seedAss = false;
       for (unsigned int iTrk = 0; iTrk < nAssTracks_; iTrk++) {
 	if ((lyrFound[iTrk]).size() >= 3) {
 	  trackFound[iTrk] = true;
-	  nAssSeeds_++;
+          if (!seedAss) {
+            nAssSeeds_++;
+            hNVotesMatched_->Fill(nVotes);
+            seedAss = true;
+          }
 	  // Flag as associated all track hits
 	  for (vector<int>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++)
 	    assHits[*itTrkHit] = true;
-	  break;
 	}
       }
     }
@@ -660,9 +669,13 @@ HoughCheck2Steps::beginJob()
     return;
   }
 
-  // Book 3D histogram
+  // Book histograms
   hXYHoughVotes_.reset(new TH3S("hXYHoughVotes", "helix Hough transform votes", nBins_[0], minPar_[0], maxPar_[0], nBins_[1], minPar_[1], maxPar_[1], nBins_[2], minPar_[2], maxPar_[2]));
   hXYHoughVotes_->SetDirectory(0);
+  hNVotes_.reset(new TH1I("hNVotes", "number of votes per bin", 200, 0., 200.));
+  hNVotes_->SetDirectory(0);
+  hNVotesMatched_.reset(new TH1I("hNVotesMatched", "number of votes per track-matched bin", 200, 0., 200.));
+  hNVotesMatched_->SetDirectory(0);
 }
 
 // ------------ method called once each job just after ending the event loop  ------------
@@ -671,6 +684,8 @@ HoughCheck2Steps::endJob()
 {
   TFile outRootFile(outRootFile_.c_str(), "RECREATE");
   hXYHoughVotes_->Write();
+  hNVotes_->Write();
+  hNVotesMatched_->Write();
   trackTree_->Write();
 }
 

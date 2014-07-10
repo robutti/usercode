@@ -48,7 +48,7 @@ int main(int argc, char* argv[])
 
   // Check arguments
   if (argc - optind != 3) {
-    cerr << "Usage: plotHoughProjections [-c] [-t<vote threshold>]] <input file name> <parX> <parY>" << endl;
+    cerr << "Usage: plotHoughProjections_pairs [-c] [-t<vote threshold>]] <input file name> <parX> <parY>" << endl;
     return 1;
   }
   char* inFileName = argv[optind];
@@ -74,7 +74,7 @@ int main(int argc, char* argv[])
   TString strParX(argv[optind + 1]);
   TString strParY(argv[optind + 2]);
   int iParX = -1, iParY = -1;
-  TString parName[5] = {"doca", "kappa", "phi", "z0", "eta"};
+  TString parName[5] = {"kappa", "lnr2", "phi", "z0", "eta"};
   TString axisName[5] = {"x", "y", "z", "u", "v"};
   for (int iPar = 0; iPar < 5; iPar++) {
     if (strParX.Atoi() == iPar || strParX == parName[iPar] || strParX == axisName[iPar])
@@ -109,9 +109,10 @@ int main(int argc, char* argv[])
     long tEntry = tTrackPar->LoadTree(iEv);
     tTrackPar->GetEntry(tEntry);
     for (unsigned int iTk = 0; iTk < vDocaEv->size(); iTk++) {
-      vPar[0].push_back(vDocaEv->at(iTk));
-      vPar[1].push_back(vKappaEv->at(iTk));
-      vPar[2].push_back(vPhiEv->at(iTk));
+      vPar[0].push_back(vKappaEv->at(iTk));
+      vPar[1].push_back(2.*log(fabs(vDocaEv->at(iTk) - 1./vKappaEv->at(iTk))));
+      int signKappa = (vKappaEv->at(iTk) > 0) ? 1 : -1;
+      vPar[2].push_back(atan2(signKappa*cos(vPhiEv->at(iTk)), -signKappa*sin(vPhiEv->at(iTk))));
       vPar[3].push_back(vZ0Ev->at(iTk));
       vPar[4].push_back(-log(tan((vThetaEv->at(iTk))/2.)));
     }
