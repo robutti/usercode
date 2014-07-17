@@ -23,6 +23,7 @@
 #include <vector>
 #include <algorithm>
 #include <map>
+#include <set>
 #include <utility>
 #include <iomanip>
 
@@ -200,7 +201,8 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
   if (!(hHoughVotes_.get()))
     return;
   // Loop on layers and hits within, store in auxiliary vectors and create allowed pairs
-  map<unsigned int, vector<pair<int, int> > > votes;
+  vector<bool> vDoubleSide;
+  map<unsigned long, map<unsigned int, set<int> > > votes;
   for (ctfseeding::SeedingLayerSets::const_iterator itLS = layerSets_.begin(); itLS != layerSets_.end(); itLS++ ) {
     for (ctfseeding::SeedingLayers::const_iterator itLyr = itLS->begin(); itLyr!= itLS->end(); itLyr++ ) {
       ctfseeding::SeedingLayer::Hits hits = itLyr->hits(iEvent, iSetup);
@@ -212,6 +214,7 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
           continue;
         int hitSubDet = hitId.subdetId();
         int hitLayer = 0;
+        bool doubleSide = false;
         if (hitSubDet == PixelSubdetector::PixelBarrel) {
           if (verbosity_ > 2)
             cout << "hitId = " << PXBDetId(hitId) << endl;
@@ -226,21 +229,25 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
           if (verbosity_ > 2)
             cout << "hitId = " << TIBDetId(hitId) << endl;
           hitLayer = TIBDetId(hitId).layer();
+          doubleSide = TIBDetId(hitId).isDoubleSide();
         }
         else if (hitSubDet == StripSubdetector::TID) {
           if (verbosity_ > 2)
             cout << "hitId = " << TIDDetId(hitId) << endl;
           hitLayer = TIDDetId(hitId).wheel();
+          doubleSide = TIDDetId(hitId).isDoubleSide();
         }
         else if (hitSubDet == StripSubdetector::TOB) {
           if (verbosity_ > 2)
             cout << "hitId = " << TOBDetId(hitId) << endl; 
           hitLayer = TOBDetId(hitId).layer();
+          doubleSide = TOBDetId(hitId).isDoubleSide();
         }
         else if (hitSubDet == StripSubdetector::TEC) {
           if (verbosity_ > 2)
             cout << "hitId = " << TECDetId(hitId) << endl;
           hitLayer = TECDetId(hitId).wheel();
+          doubleSide = TECDetId(hitId).isDoubleSide();
         }
         else 
           continue;
@@ -250,6 +257,7 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
         vXHit_.push_back(hitPosition.x());
         vYHit_.push_back(hitPosition.y());
         vZHit_.push_back(hitPosition.z());
+        vDoubleSide.push_back(doubleSide);
         // int lyrId = lyrMapOffset_[hitSubDet] + hitLayer - 1;
         // vHits.push_back(make_pair(lyrId, *itHit));
       }
@@ -290,6 +298,8 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
           double h2 = 1./(kappa*kappa) - c2/4.;
           double dxM = sqrt(h2/(1 + a*a));
           for (int iSign = -1; iSign <= 1; iSign += 2) {
+            if (iSign*kappa < minPar_[1] || iSign*kappa > maxPar_[1])
+              continue;
             int signh = ((y1 - y2) > 0) ? iSign : -iSign;
             double xC = xM + signh*dxM;
             double yC = yM + a*signh*dxM;
@@ -304,131 +314,93 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
             if (s1 < 0)
               s1 += 2*M_PI/kappa;
             double z0 = z1 - (z2 - z1)*s1/Ds;
-            hHoughVotes_->Fill(doca, iSign*kappa, phi, z0, eta);
+            // Insert votes in vote map, taking overlaps into account
+            double par[5] = {doca, iSign*kappa, phi, z0, eta};
+            int firstBin[5], lastBin[5];
+            for (int iPar = 0; iPar < 5; iPar++) {
+              firstBin[iPar] = max(0, (int)((par[iPar] - minPar_[iPar])/binWidth_[iPar] - binOverlap_));
+              lastBin[iPar] = min(nBins_[iPar] - 1, (int)((par[iPar] - minPar_[iPar])/binWidth_[iPar] + binOverlap_));
+            }
+            for (int iDoca = firstBin[0]; iDoca <= lastBin[0]; iDoca++) {
+              for (int iPhi = firstBin[2]; iPhi <= lastBin[2]; iPhi++) {
+                for (int iZ0 = firstBin[3]; iZ0 <= lastBin[3]; iZ0++) {
+                  for (int iEta = firstBin[4]; iEta <= lastBin[4]; iEta++) {
+                    unsigned long keyBin = hHoughVotes_->GetBin(iDoca + 1, (iSign*kappa - minPar_[1])/binWidth_[1] + 1, iPhi + 1, iZ0 + 1, iEta + 1);
+                    map<unsigned int, set<int> >& lyrMap = votes[keyBin];
+                    unsigned int keyLyr1 = (vSubdet_[iHit1] << 4) | vLayer_[iHit1];
+                    set<int>& sLyrHits1 = lyrMap[keyLyr1];
+                    sLyrHits1.insert(iHit1);
+                    unsigned int keyLyr2 = (vSubdet_[iHit2] << 4) | vLayer_[iHit2];
+                    set<int>& sLyrHits2 = lyrMap[keyLyr2];
+                    sLyrHits2.insert(iHit2);
+                  }
+                }
+              }
+            }
           }
         }
       }
     }
   }
-
-  //             // Insert point in vote map, taking overlaps into account
-  //             int firstPhiBin = max(0, (int)((phi - minPar_[2] - phiOverlap)/phiBinWidth));
-  //             int lastPhiBin = min(nBins_[2] - 1, (int)((phi - minPar_[2] + phiOverlap)/phiBinWidth));
-  //             for (int iPhi = firstPhiBin; iPhi <= lastPhiBin; iPhi++) {
-  //       	unsigned int keyBin = iDoca | (iSqrtK << 8) | (iPhi << 16);
-  //       	map<unsigned int, vector<pair<int, double> > >& lyrMap = xyVotes[keyBin];
-  //       	unsigned int keyLyr = (hitSubDet << 4) | hitLayer;
-  //       	vector<pair<int, double> >& vLyrHits = lyrMap[keyLyr];
-  //       	vLyrHits.push_back(make_pair(nHit, phi));
-  //             }
-  //           }
-  //         }
-  //       } else
-  //         if (verbosity_ > 2)
-  //           cout << " - invalid hit" << endl;
-  //     }
-
-  // // Longitudinal step
-  // map<unsigned long, map<unsigned int, vector<int> > > xyzVotes;
-  // // Fill 5-par map for 3-par bins over threshold
-  // for (map<unsigned int, map<unsigned int, vector<pair<int, double> > > >::iterator itBin = xyVotes.begin(); itBin != xyVotes.end(); itBin++) {
-  //   unsigned int keyBin = (*itBin).first;
-  //   int docaBin = (keyBin & 255) + 1;
-  //   int sqrtKBin = ((keyBin >> 8) & 255) + 1;
-  //   int phiBin = ((keyBin >> 16) & 255) + 1;
-  //   unsigned int lyrVotes = (*itBin).second.size();
-  //   // Fill x-y histogram with number of voting layers
-  //   hXYHoughVotes_->SetBinContent(docaBin, sqrtKBin, phiBin, lyrVotes);
-  //   if (lyrVotes >= xyVoteThr_) {
-  //     double doca = minPar_[0] + (docaBin + 0.5)*docaBinWidth;
-  //     double sqrtK = minPar_[1] + (sqrtKBin + 0.5)*sqrtKBinWidth;
-  //     double kappa = sqrtK*fabs(sqrtK);
-  //     for (map<unsigned int, vector<pair<int, double> > >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
-  //       unsigned int keyLyr = (*itLyr).first;
-  //       for (vector<pair<int, double> >::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
-  //         TransientTrackingRecHit::ConstRecHitPointer hit = vHits[(*itHit).first];
-  //         GlobalPoint hitPosition = hit->globalPosition();
-  //         double x = 10.*hitPosition.x();
-  //         double y = 10.*hitPosition.y();
-  //         double z = 10.*hitPosition.z();
-  //         double phi = (*itHit).second;
-  //         double xc = (doca - 1./kappa)*sin(phi);
-  //         double yc = -(doca - 1./kappa)*cos(phi);
-  //         for (int iZ0 = 0; iZ0 < nBins_[3]; iZ0++) {
-  //           double z0 = minPar_[3] + (iZ0 + 0.5)*z0BinWidth;
-  //           double st = 1./kappa*(atan2(kappa*(y - yc), kappa*(x - xc)) - phi + M_PI/2.);
-  //           if (st < 0)  // rotation angle has crossed the +/-PI border
-  //             st += 2.*M_PI/fabs(kappa);
-  //           else if (st > 2.*M_PI/fabs(kappa))
-  //             st -= 2.*M_PI/fabs(kappa);
-  //           double lambda = atan((z - z0)/st);
-  //           double eta = -log(tan((M_PI/2. - lambda)/2.));
-  //           // Insert point in 5-parameter vote map, taking overlaps into account
-  //           int firstEtaBin = max(0, (int)((eta - minPar_[4] - etaOverlap)/etaBinWidth));
-  //           int lastEtaBin = min(nBins_[4] - 1, (int)((eta - minPar_[4] + etaOverlap)/etaBinWidth));
-  //           for (int iEta = firstEtaBin; iEta <= lastEtaBin; iEta++) {
-  //             unsigned long key5Par = keyBin | (iZ0 << 24) | ((unsigned long)iEta << 32);
-  //             map<unsigned int, vector<int> >& lyrMap = xyzVotes[key5Par];
-  //             vector<int>& vLyrHits = lyrMap[keyLyr];
-  //             vLyrHits.push_back((*itHit).first);
-  //           }
-  //         }
-  //       }
-  //     }      
-  //   }
-  // }
-  // nSeeds_ = xyzVotes.size();
+  nSeeds_ = votes.size();
+  // Fill 5D histogram
+  for (map<unsigned long, map<unsigned int, set<int> > >::iterator itBin = votes.begin(); itBin != votes.end(); itBin++) {
+    hHoughVotes_->AddBinContent((*itBin).first, (*itBin).second.size());
+  }
 
   // // Clean-up seeds: remove below threshold and duplicates if requested
-  map<unsigned long, map<unsigned int, vector<int> > > passVotes;
-  // for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = xyzVotes.begin(); itBin != xyzVotes.end(); itBin++) {
-  //   bool nextBin = false;
-    // unsigned int lyrVotes = (*itBin).second.size();
-    // if (lyrVotes >= xyzVoteThr_) {
-    //   if (cleanupSeeds_) {
-    //     // Get bin
-    //     unsigned long htBin = (*itBin).first;
-    //     int docaBin = htBin & 255;
-    //     int sqrtKBin = (htBin >> 8) & 255;
-    //     int phiBin = (htBin >> 16) & 255;
-    //     int z0Bin = (htBin >> 24) & 255;
-    //     int etaBin = (htBin >> 32) & 255;
-    //     int deltaBin = 1;  // width of bin range where to look for duplicates
-    //     for (int iDoca = max(0, docaBin - deltaBin); !nextBin && iDoca < min(nBins_[0], docaBin + deltaBin + 1); iDoca++)
-    //       for (int iSqrtK = max(0, sqrtKBin - deltaBin); !nextBin && iSqrtK < min(nBins_[1], sqrtKBin + deltaBin + 1); iSqrtK++)
-    //         for (int iPhi = max(0, phiBin - deltaBin); !nextBin && iPhi < min(nBins_[2], phiBin + deltaBin + 1); iPhi++)
-    //           for (int iZ0 = max(0, z0Bin - deltaBin); !nextBin && iZ0 < min(nBins_[3], z0Bin + deltaBin + 1); iZ0++)
-    //     	for (int iEta = max(0, etaBin - deltaBin); !nextBin && iEta < min(nBins_[4], etaBin + deltaBin + 1); iEta++) {
-    //     	  unsigned long key = iDoca | (iSqrtK << 8) | (iPhi << 16) | ((unsigned long)iZ0 << 24) | ((unsigned long)iEta << 32);
-    //     	  if (key == htBin || xyzVotes.find(key) == xyzVotes.end())
-    //     	    continue;
-    //     	  bool hitFound = true;
-    //     	  for (map<unsigned int, vector<int> >::iterator itLyr1 = (*itBin).second.begin(); hitFound && itLyr1 != (*itBin).second.end(); itLyr1++) {
-    //     	    for (vector<int>::iterator itHit1 = (*itLyr1).second.begin(); hitFound && itHit1 != (*itLyr1).second.end(); itHit1++) {
-    //     	      hitFound = false;
-    //     	      for (map<unsigned int, vector<int> >::iterator itLyr2 = xyzVotes[key].begin(); !hitFound && itLyr2 != xyzVotes[key].end(); itLyr2++) {
-    //     		if ((*itLyr2).first != (*itLyr1).first)
-    //     		  continue;
-    //     		for (vector<int>::iterator itHit2 = (*itLyr2).second.begin(); itHit2 != (*itLyr2).second.end(); itHit2++) {
-    //     		  if ((*itHit1) == (*itHit2)) {
-    //     		    hitFound = true;
-    //     		    break;
-    //     		  }
-    //     		}
-    //     	      }
-    //     	    }
-    //     	  }
-    //     	  if (hitFound) {  // all hits found in a "nearby" bin
-    //     	    (*itBin).second.clear();  // remove all hits from the bin
-  //       	    nextBin = true;
-  //       	  }
-  //       	}
-  //     }
-  //     if (!nextBin)  // no nearby bin containing all hits (or no clean-up)
-  //       passVotes[(*itBin).first] = (*itBin).second;
-  //   }
-  // }
-  // nGoodSeeds_ = passVotes.size();
+  map<unsigned long, map<unsigned int, set<int> > > passVotes;
+  for (map<unsigned long, map<unsigned int, set<int> > >::iterator itBin = votes.begin(); itBin != votes.end(); itBin++) {
+    bool nextBin = false;
+    unsigned int lyrVotes = (*itBin).second.size();
+    if (lyrVotes >= voteThr_) {
+      if (cleanupSeeds_) {
+        // Get bin
+        unsigned long bin = (*itBin).first;
+        int docaBin = bin%(nBins_[0]);
+        bin /= nBins_[0];
+        int kappaBin = bin%(nBins_[1]);
+        bin /= nBins_[1];
+        int phiBin = bin%(nBins_[2]);
+        bin /= nBins_[2];
+        int z0Bin = bin%(nBins_[3]);
+        int etaBin = bin/nBins_[3];
+        int deltaBin = 1;  // width of bin range where to look for duplicates
+        for (int iDoca = max(0, docaBin - deltaBin); !nextBin && iDoca < min(nBins_[0], docaBin + deltaBin + 1); iDoca++)
+          for (int iKappa = max(0, kappaBin - deltaBin); !nextBin && iKappa < min(nBins_[1], kappaBin + deltaBin + 1); iKappa++)
+            for (int iPhi = max(0, phiBin - deltaBin); !nextBin && iPhi < min(nBins_[2], phiBin + deltaBin + 1); iPhi++)
+              for (int iZ0 = max(0, z0Bin - deltaBin); !nextBin && iZ0 < min(nBins_[3], z0Bin + deltaBin + 1); iZ0++)
+        	for (int iEta = max(0, etaBin - deltaBin); !nextBin && iEta < min(nBins_[4], etaBin + deltaBin + 1); iEta++) {
+        	  unsigned long testBin = hHoughVotes_->GetBin(iDoca, iKappa, iPhi, iZ0, iEta);
+        	  if (testBin == (*itBin).first || votes.find(testBin) == votes.end())
+        	    continue;
+        	  bool hitFound = true;
+        	  for (map<unsigned int, set<int> >::iterator itLyr1 = (*itBin).second.begin(); hitFound && itLyr1 != (*itBin).second.end(); itLyr1++) {
+        	    for (set<int>::iterator itHit1 = (*itLyr1).second.begin(); hitFound && itHit1 != (*itLyr1).second.end(); itHit1++) {
+        	      hitFound = false;
+        	      for (map<unsigned int, set<int> >::iterator itLyr2 = votes[testBin].begin(); !hitFound && itLyr2 != votes[testBin].end(); itLyr2++) {
+        		if ((*itLyr2).first != (*itLyr1).first)
+        		  continue;
+        		for (set<int>::iterator itHit2 = (*itLyr2).second.begin(); itHit2 != (*itLyr2).second.end(); itHit2++) {
+        		  if ((*itHit1) == (*itHit2)) {
+        		    hitFound = true;
+        		    break;
+        		  }
+        		}
+        	      }
+        	    }
+        	  }
+        	  if (hitFound) {  // all hits found in a "nearby" bin
+        	    (*itBin).second.clear();  // remove all hits from the bin
+        	    nextBin = true;
+        	  }
+        	}
+      }
+      if (!nextBin)  // no nearby bin containing all hits (or no clean-up)
+        passVotes[(*itBin).first] = (*itBin).second;
+    }
+  }
+  nGoodSeeds_ = passVotes.size();
 
   // Associate track hits and get parameters
   Handle<TrackCollection> tracks;
@@ -484,129 +456,121 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
     vTheta_.push_back(perigeePars.theta());
     vAlgo_.push_back(itTrack->algo());
     // Check if track is in histogram acceptance
-    // if (vDoca_.back() < minPar_[0] || vDoca_.back() > maxPar_[0] ||
-    //     vKappa_.back()/sqrt(fabs(vKappa_.back())) < minPar_[1] || vKappa_.back()/sqrt(fabs(vKappa_.back())) > maxPar_[1] ||
-    //     vPhi_.back() < minPar_[2] || vPhi_.back() > maxPar_[2] ||
-    //     vZ0_.back() < minPar_[3] || vZ0_.back() > maxPar_[3] ||
-    //     -log(tan(0.5*vTheta_.back())) < minPar_[4] || -log(tan(0.5*vTheta_.back())) > maxPar_[4])
-    //   continue;
+    if (vDoca_.back() < minPar_[0] || vDoca_.back() > maxPar_[0] ||
+        vKappa_.back() < minPar_[1] || vKappa_.back() > maxPar_[1] ||
+        vPhi_.back() < minPar_[2] || vPhi_.back() > maxPar_[2] ||
+        vZ0_.back() < minPar_[3] || vZ0_.back() > maxPar_[3] ||
+        -log(tan(0.5*vTheta_.back())) < minPar_[4] || -log(tan(0.5*vTheta_.back())) > maxPar_[4])
+      continue;
     nAccTracks_++;      
     vector<int> vTHits;
-    // vector<double> vTSubdet;
-    // vector<double> vTLayer;
-    // vector<double> vTXHit;
-    // vector<double> vTYHit;
-    // vector<double> vTZHit;
     unsigned int nHitsOrig = 0;
     for (trackingRecHit_iterator i = itTrack->recHitsBegin(); i != itTrack->recHitsEnd(); i++) {
       nHitsOrig++;
       int assHit = -1;
-      // double maxPixelDxy = 0.01;
-      // double maxPixelDz = 0.01;
-      // double maxStripDrphi = 0.02;
-      // double deltaZ = 1000;
+      double maxPixelDxy = 0.01;
+      double maxPixelDz = 0.01;
+      double maxStripDrphi = 0.02;
+      double deltaZ = 1000;
       TransientTrackingRecHit::RecHitPointer trkHit = builder_->build(&**i );
       if (trkHit->isValid()) {
 	DetId trkHitId = trkHit->geographicalId();
 	if(trkHitId.det() != DetId::Tracker)
 	  continue;
+        int trkHitSubdet = trkHitId.subdetId();
+        int trkHitLayer = 0;
 	GlobalPoint trkHitPosition = trkHit->globalPosition();
-        //	vTSubdet.push_back(trkHitId.subdetId());
-	switch (trkHitId.subdetId()) {
-	case PixelSubdetector::PixelBarrel:
-          //	  vTLayer.push_back(PXBDetId(trkHitId).layer());
-	  if (verbosity_ > 2)
-	    cout << "Hit detId = " << PXBDetId(trkHitId) << ", position = " << trkHitPosition;
-	  break;
-        case PixelSubdetector::PixelEndcap:
-          //	  vTLayer.push_back(PXFDetId(trkHitId).disk());
-	  if (verbosity_ > 2)
-            cout << "Hit detId = " << PXFDetId(trkHitId) << ", position = " << trkHitPosition;
-	  break;
-        case StripSubdetector::TIB:
-          //	  vTLayer.push_back(TIBDetId(trkHitId).layer());
-	  if (verbosity_ > 2)
-            cout << "Hit detId = " << TIBDetId(trkHitId) << ", position = " << trkHitPosition;
-	  break;
-        case StripSubdetector::TID:
-          //	  vTLayer.push_back(TIDDetId(trkHitId).wheel());
-	  if (verbosity_ > 2)
-            cout << "Hit detId = " << TIDDetId(trkHitId) << ", position = " << trkHitPosition;
-	  break;
-        case StripSubdetector::TOB:
-          //	  vTLayer.push_back(TOBDetId(trkHitId).layer());
-	  if (verbosity_ > 2)
-            cout << "Hit detId = " << TOBDetId(trkHitId) << ", position = " << trkHitPosition;
-	  break;
-        case StripSubdetector::TEC:
-          //	  vTLayer.push_back(TECDetId(trkHitId).wheel());
-	  if (verbosity_ > 2)
-	    cout << "Hit detId = " << TECDetId(trkHitId) << ", position = " << trkHitPosition;
-	  break;
-        default:
-	  break;
+          switch (trkHitSubdet) {
+          case PixelSubdetector::PixelBarrel:
+            if (verbosity_ > 2)
+              cout << "Hit detId = " << PXBDetId(trkHitId) << ", position = " << trkHitPosition;
+            trkHitLayer = PXBDetId(trkHitId);
+            break;
+          case PixelSubdetector::PixelEndcap:
+            if (verbosity_ > 2)
+              cout << "Hit detId = " << PXFDetId(trkHitId) << ", position = " << trkHitPosition;
+            trkHitLayer = PXFDetId(trkHitId).disk();
+            break;
+          case StripSubdetector::TIB:
+            if (verbosity_ > 2)
+              cout << "Hit detId = " << TIBDetId(trkHitId) << ", position = " << trkHitPosition;
+            trkHitLayer = TIBDetId(trkHitId).layer();
+            break;
+          case StripSubdetector::TID:
+            if (verbosity_ > 2)
+              cout << "Hit detId = " << TIDDetId(trkHitId) << ", position = " << trkHitPosition;
+            trkHitLayer = TIDDetId(trkHitId).wheel();
+            break;
+          case StripSubdetector::TOB:
+            if (verbosity_ > 2)
+              cout << "Hit detId = " << TOBDetId(trkHitId) << ", position = " << trkHitPosition;
+            trkHitLayer = TOBDetId(trkHitId).layer();
+            break;
+          case StripSubdetector::TEC:
+            if (verbosity_ > 2)
+              cout << "Hit detId = " << TECDetId(trkHitId) << ", position = " << trkHitPosition;
+            trkHitLayer = TECDetId(trkHitId).wheel();
+            break;
+          default:
+            break;
+          }
+        double trkHitPhi = atan2(trkHitPosition.y(), trkHitPosition.x());
+        for (unsigned int iHit = 0; iHit < vSubdet_.size(); iHit++) {
+          //	  DetId hitId = (vHits[iHit])->geographicalId();
+	  if (vSubdet_[iHit] == trkHitSubdet && vLayer_[iHit] == trkHitLayer) {
+	    double hitPhi = atan2(vYHit_[iHit], vXHit_[iHit]);
+	    double hitR = sqrt(vXHit_[iHit]*vXHit_[iHit] + vYHit_[iHit]*vYHit_[iHit]);
+	    switch (trkHitSubdet) {
+	    case PixelSubdetector::PixelBarrel:
+              if (fabs(vXHit_[iHit] - trkHitPosition.x()) > maxPixelDxy ||
+                  fabs(vYHit_[iHit] - trkHitPosition.y()) > maxPixelDxy ||
+                  fabs(vZHit_[iHit] - trkHitPosition.z()) > maxPixelDz)
+                continue;
+	      break;
+	    case PixelSubdetector::PixelEndcap:
+              if (fabs(vXHit_[iHit] - trkHitPosition.x()) > maxPixelDxy ||
+                  fabs(vYHit_[iHit] - trkHitPosition.y()) > maxPixelDxy ||
+                  fabs(vZHit_[iHit] - trkHitPosition.z()) > maxPixelDz)
+                continue;
+	      break;
+	    case StripSubdetector::TIB:
+	      if (vDoubleSide[iHit]) {
+		if (!(((TIBDetId)trkHitId).isRPhi()) ||  hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(vZHit_[iHit] - trkHitPosition.z()) > deltaZ)
+		  continue;
+	      } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
+                continue;
+	      break;
+	    case StripSubdetector::TID:
+	      if (vDoubleSide[iHit]) {
+		if (!(((TIDDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(vZHit_[iHit] - trkHitPosition.z()) > deltaZ)
+		  continue;
+	      } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
+		continue;
+	      break;
+	    case StripSubdetector::TOB:
+	      if (vDoubleSide[iHit]) {
+		if (!(((TOBDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(vZHit_[iHit] - trkHitPosition.z()) > deltaZ)
+		  continue;
+	      } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
+		continue;
+	      break;
+	    case StripSubdetector::TEC:
+	      if (vDoubleSide[iHit]) {
+		if (!(((TECDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(vZHit_[iHit] - trkHitPosition.z()) > deltaZ)
+		  continue;
+	      } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
+		continue;
+	      break;
+	    default:
+	      continue;
+	      break;
+	    }
+	    deltaZ = fabs(vZHit_[iHit] - trkHitPosition.z());
+	    assHit = iHit;
+            if (deltaZ < 4.)
+              break;
+	  }
 	}
-        //	vTXHit.push_back(trkHitPosition.x());
-        //	vTYHit.push_back(trkHitPosition.y());
-        //	vTZHit.push_back(trkHitPosition.z());
-        //	double trkHitPhi = atan2(trkHitPosition.y(), trkHitPosition.x());
-	//	for (unsigned int iHit = 0; iHit < vHits.size(); iHit++) {
-	//   DetId hitId = (vHits[iHit])->geographicalId();
-	//   if ((hitId.rawId() & (~3)) == (trkHitId.rawId() & ~3)) {
-	//     GlobalPoint hitPosition = (vHits[iHit])->globalPosition();
-	//     double hitPhi = atan2(hitPosition.y(), hitPosition.x());
-	//     double hitR = sqrt(hitPosition.x()*hitPosition.x() + hitPosition.y()*hitPosition.y());
-	//     switch (trkHitId.subdetId()) {
-	//     case PixelSubdetector::PixelBarrel:
-        //       if (fabs(hitPosition.x() - trkHitPosition.x()) > maxPixelDxy ||
-        //           fabs(hitPosition.y() - trkHitPosition.y()) > maxPixelDxy ||
-        //           fabs(hitPosition.z() - trkHitPosition.z()) > maxPixelDz)
-        //         continue;
-	//       break;
-	//     case PixelSubdetector::PixelEndcap:
-        //       if (fabs(hitPosition.x() - trkHitPosition.x()) > maxPixelDxy ||
-        //           fabs(hitPosition.y() - trkHitPosition.y()) > maxPixelDxy ||
-        //           fabs(hitPosition.z() - trkHitPosition.z()) > maxPixelDz)
-        //         continue;
-	//       break;
-	//     case StripSubdetector::TIB:
-	//       if (((TIBDetId)hitId).isDoubleSide()) {
-	// 	if (!(((TIBDetId)trkHitId).isRPhi()) ||  hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
-	// 	  continue;
-	//       } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
-        //         continue;
-	//       break;
-	//     case StripSubdetector::TID:
-	//       if (((TIDDetId)hitId).isDoubleSide()) {
-	// 	if (!(((TIDDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
-	// 	  continue;
-	//       } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
-	// 	continue;
-	//       break;
-	//     case StripSubdetector::TOB:
-	//       if (((TOBDetId)hitId).isDoubleSide()) {
-	// 	if (!(((TOBDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
-	// 	  continue;
-	//       } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
-	// 	continue;
-	//       break;
-	//     case StripSubdetector::TEC:
-	//       if (((TECDetId)hitId).isDoubleSide()) {
-	// 	if (!(((TECDetId)trkHitId).isRPhi()) || hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi || fabs(hitPosition.z() - trkHitPosition.z()) > deltaZ)
-	// 	  continue;
-	//       } else if (hitR*fabs(hitPhi - trkHitPhi) > maxStripDrphi)
-	// 	continue;
-	//       break;
-	//     default:
-	//       continue;
-	//       break;
-	//     }
-	//     deltaZ = fabs(hitPosition.z() - trkHitPosition.z());
-	//     assHit = iHit;
-        //     if (deltaZ < 4.)
-        //       break;
-	//   }
-	// }
         if (assHit >= 0) {
           vTHits.push_back(assHit);
           if (verbosity_ > 2)
@@ -618,11 +582,6 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
     }
     if (verbosity_ > 2)
       cout << "Number of hits in track: " << nHitsOrig << "; number of associated hits: " << vTHits.size() << endl;
-    // vSubdet_.push_back(vTSubdet);
-    // vLayer_.push_back(vTLayer);
-    // vXHit_.push_back(vTXHit);
-    // vYHit_.push_back(vTYHit);
-    // vZHit_.push_back(vTZHit);
     if (vTHits.size() >= 3)
       vHitsTrk.push_back(vTHits);
   }
@@ -634,19 +593,20 @@ HoughCheckStubs::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
   // Number of HT "seeds" surviving after using hits and "seeds" corresponding to tracks
   nTriedSeeds_ = 0;
   nAssSeeds_ = 0;
-  for (map<unsigned long, map<unsigned int, vector<int> > >::iterator itBin = passVotes.begin(); itBin != passVotes.end(); itBin++) {
+  for (map<unsigned long, map<unsigned int, set<int> > >::iterator itBin = passVotes.begin(); itBin != passVotes.end(); itBin++) {
     map<unsigned int, bool> lyrTried;  // map with layers tried
     vector<map<unsigned int, bool> > lyrFound(nAssTracks_);  // vector with layers with association found
     unsigned int nVotes = 0;
-    for (map<unsigned int, vector<int> >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
+    for (map<unsigned int, set<int> >::iterator itLyr = (*itBin).second.begin(); itLyr != (*itBin).second.end(); itLyr++) {
       nVotes += (*itLyr).second.size();
       unsigned int lyrId = (*itLyr).first;
-      for (vector<int>::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
+      for (set<int>::iterator itHit = (*itLyr).second.begin(); itHit != (*itLyr).second.end(); itHit++) {
 	if (assHits.find(*itHit) == assHits.end()) {
 	  if (lyrTried.find(lyrId) == lyrTried.end())  // new layer tried
 	    lyrTried[lyrId] = true;
-	  for (unsigned int iTrk = -1; iTrk < nAssTracks_; iTrk++){
+	  for (unsigned int iTrk = 0; iTrk < nAssTracks_; iTrk++){
 	    for (vector<int>::iterator itTrkHit = vHitsTrk[iTrk].begin(); itTrkHit != vHitsTrk[iTrk].end(); itTrkHit++) {
+              //              cout << "*itHit = " << *itHit << "; *itTrkHit = "<< *itTrkHit;
 	      if ((*itHit) == (*itTrkHit)) {
 		if (lyrFound[iTrk].find(lyrId) == lyrFound[iTrk].end())  // new layer associated
 		  (lyrFound[iTrk])[lyrId] = true;
@@ -767,7 +727,7 @@ HoughCheckStubs::beginJob()
   hHoughVotes_->SetDirectory(0);
   hNVotes_.reset(new TH1I("hNVotes", "number of votes per bin", 200, 0., 200.));
   hNVotes_->SetDirectory(0);
-  hNVotesMatched_.reset(new TH1I("hNVotes", "number of votes per track-matched bin", 200, 0., 200.));
+  hNVotesMatched_.reset(new TH1I("hNVotesMatched", "number of votes per track-matched bin", 200, 0., 200.));
   hNVotesMatched_->SetDirectory(0);
 
   // Set content to -128 for all histogram bins, to use full 8-bit range
